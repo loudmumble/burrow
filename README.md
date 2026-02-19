@@ -10,10 +10,17 @@ All tunnel traffic is encrypted with X25519 key exchange and ChaCha20-Poly1305 o
 
 ## Install / Build
 
-Requires Go 1.23+.
+Requires Go 1.23+. A pre-built linux/amd64 binary is in `build/`.
 
 ```bash
-~/go-sdk/go/bin/go build -o burrow ./cmd/burrow/
+# Use pre-built binary
+./build/burrow --help
+
+# Or build from source
+make build          # produces build/burrow
+
+# Manual build (no Make)
+~/go-sdk/go/bin/go build -ldflags="-s -w" -o burrow .
 ```
 
 ## Usage
