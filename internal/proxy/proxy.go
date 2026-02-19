@@ -62,6 +62,11 @@ type Config struct {
 	ReadTimeout    time.Duration
 	Logger         *log.Logger
 	MaxConnections int
+	// Dialer overrides the default net.Dial for CONNECT requests.
+	// When set, all SOCKS5 CONNECT traffic is routed through this function
+	// instead of directly dialing the target. Used for routing through
+	// yamux agent sessions (non-root mode).
+	Dialer func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -210,8 +215,13 @@ func (s *SOCKS5) handleConnection(ctx context.Context, conn net.Conn) {
 	}
 
 	// Phase 3: Connect to target
-	dialer := net.Dialer{Timeout: s.config.DialTimeout}
-	targetConn, err := dialer.DialContext(ctx, "tcp", target)
+	var targetConn net.Conn
+	if s.config.Dialer != nil {
+		targetConn, err = s.config.Dialer(ctx, "tcp", target)
+	} else {
+		dialer := net.Dialer{Timeout: s.config.DialTimeout}
+		targetConn, err = dialer.DialContext(ctx, "tcp", target)
+	}
 	if err != nil {
 		s.sendReply(conn, RepHostUnreachable, nil)
 		s.logger.Printf("[socks5] connect to %s failed: %v", target, err)
@@ -220,8 +230,11 @@ func (s *SOCKS5) handleConnection(ctx context.Context, conn net.Conn) {
 	defer targetConn.Close()
 
 	// Send success reply with the bound address
-	localAddr := targetConn.LocalAddr().(*net.TCPAddr)
-	s.sendReply(conn, RepSucceeded, localAddr)
+	if tcpAddr, ok := targetConn.LocalAddr().(*net.TCPAddr); ok {
+		s.sendReply(conn, RepSucceeded, tcpAddr)
+	} else {
+		s.sendReply(conn, RepSucceeded, &net.TCPAddr{IP: net.IPv4zero, Port: 0})
+	}
 
 	// Clear deadline for relay phase
 	conn.SetDeadline(time.Time{})

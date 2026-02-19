@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "2.0.0"
+var version = "3.0.0"
 
 var rootCmd = &cobra.Command{
 	Use:   "burrow",
@@ -15,15 +15,16 @@ var rootCmd = &cobra.Command{
 	Long: `Burrow — Network pivoting, tunneling, and agent management.
 
 Part of the Agent-HQ Attack Suite. Provides:
-  - SOCKS5 proxy server (RFC 1928)
+  - SOCKS5 proxy server (RFC 1928) with session routing
   - Local/remote TCP port forwarding
   - Reverse tunnel with keepalive and auto-reconnect
   - Multi-hop pivot chain orchestration
   - Network topology discovery (ping sweep + port scan)
   - Agent mode with reverse-connect to proxy server
   - TUN interface for transparent network pivoting
-  - WebUI dashboard for session management
-  - WebSocket transport for firewall evasion`,
+  - Multiple transports: Raw TCP/TLS, WebSocket, DNS tunnel, ICMP tunnel
+  - Socat-style relay for arbitrary endpoint bridging
+  - WebUI dashboard for session management`,
 	Version: version,
 }
 

@@ -1,28 +1,46 @@
-.PHONY: build build-py test clean tidy
+.PHONY: build build-all test clean tidy
 
-GO        := $(HOME)/go-sdk/go/bin/go
+GO        := $(HOME)/go1.24/go/bin/go
+MODULE    := github.com/loudmumble/burrow/cmd/burrow/cmd
 BINARY    := burrow
 BUILD_DIR := build
-ENTRY_MOD  := burrow.cli
-ENTRY_FUNC := main
+VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "3.0.0")
+LDFLAGS   := -s -w -X $(MODULE).version=$(VERSION)
 
+PLATFORMS := linux/amd64 linux/arm64 windows/amd64 darwin/amd64 darwin/arm64
+
+# Build for current platform
 build:
 	@mkdir -p $(BUILD_DIR)
-	$(GO) build -ldflags="-s -w" -o $(BUILD_DIR)/$(BINARY) .
+	CGO_ENABLED=0 $(GO) build -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY) .
 	@echo "Built: $(BUILD_DIR)/$(BINARY)"
 
-build-py:
-	@mkdir -p $(BUILD_DIR)/.work
-	@echo 'from $(ENTRY_MOD) import $(ENTRY_FUNC); $(ENTRY_FUNC)()' > $(BUILD_DIR)/.work/entry.py
-	pyinstaller --onefile \
-		--name $(BINARY)-py \
-		--distpath $(BUILD_DIR) \
-		--workpath $(BUILD_DIR)/.work \
-		--specpath $(BUILD_DIR)/.work \
-		--clean --noconfirm \
-		--paths src \
-		$(BUILD_DIR)/.work/entry.py
-	@echo "Built: $(BUILD_DIR)/$(BINARY)-py"
+# Cross-compile for all target platforms
+build-all:
+	@mkdir -p $(BUILD_DIR)
+	@for platform in $(PLATFORMS); do \
+		GOOS=$${platform%/*}; \
+		GOARCH=$${platform#*/}; \
+		ext=""; \
+		if [ "$$GOOS" = "windows" ]; then ext=".exe"; fi; \
+		echo "Building $$GOOS/$$GOARCH..."; \
+		GOOS=$$GOOS GOARCH=$$GOARCH CGO_ENABLED=0 $(GO) build \
+			-ldflags="$(LDFLAGS)" \
+			-o $(BUILD_DIR)/$(BINARY)-$$GOOS-$$GOARCH$$ext . || exit 1; \
+		echo "  -> $(BUILD_DIR)/$(BINARY)-$$GOOS-$$GOARCH$$ext"; \
+	done
+	@echo "All platforms built successfully."
+
+# Build single platform: make build-linux-arm64
+build-%:
+	@mkdir -p $(BUILD_DIR)
+	$(eval GOOS := $(word 1,$(subst -, ,$*)))
+	$(eval GOARCH := $(word 2,$(subst -, ,$*)))
+	$(eval EXT := $(if $(filter windows,$(GOOS)),.exe,))
+	GOOS=$(GOOS) GOARCH=$(GOARCH) CGO_ENABLED=0 $(GO) build \
+		-ldflags="$(LDFLAGS)" \
+		-o $(BUILD_DIR)/$(BINARY)-$(GOOS)-$(GOARCH)$(EXT) .
+	@echo "Built: $(BUILD_DIR)/$(BINARY)-$(GOOS)-$(GOARCH)$(EXT)"
 
 test:
 	$(GO) test ./...

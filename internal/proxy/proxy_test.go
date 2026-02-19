@@ -261,3 +261,141 @@ func TestSOCKS5Stats(t *testing.T) {
 		t.Fatalf("initial stats: active=%d total=%d", active, total)
 	}
 }
+
+func startTestProxyWithDialer(t *testing.T, dialer func(ctx context.Context, network, addr string) (net.Conn, error)) (*SOCKS5, string) {
+	t.Helper()
+	cfg := DefaultConfig()
+	cfg.ListenAddr = "127.0.0.1:0"
+	cfg.Dialer = dialer
+
+	s := NewSOCKS5WithConfig(cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+		s.Stop()
+	})
+
+	go func() {
+		s.StartWithContext(ctx)
+	}()
+
+	for i := 0; i < 50; i++ {
+		time.Sleep(10 * time.Millisecond)
+		if addr := s.Addr(); addr != "" {
+			return s, addr
+		}
+	}
+	t.Fatal("proxy didn't start in time")
+	return nil, ""
+}
+
+func TestSOCKS5CustomDialer(t *testing.T) {
+	echoLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echoLn.Close()
+
+	go func() {
+		for {
+			conn, err := echoLn.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				io.Copy(conn, conn)
+			}()
+		}
+	}()
+
+	dialerCalled := make(chan string, 1)
+	customDialer := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dialerCalled <- addr
+		return net.DialTimeout("tcp", echoLn.Addr().String(), 2*time.Second)
+	}
+
+	_, proxyAddr := startTestProxyWithDialer(t, customDialer)
+
+	conn, err := socks5Connect(proxyAddr, "10.99.99.99:9999")
+	if err != nil {
+		t.Fatalf("socks5 connect: %v", err)
+	}
+	defer conn.Close()
+
+	select {
+	case got := <-dialerCalled:
+		if got != "10.99.99.99:9999" {
+			t.Fatalf("dialer called with %q, want %q", got, "10.99.99.99:9999")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("custom dialer was not called")
+	}
+
+	msg := []byte("custom dialer echo")
+	conn.Write(msg)
+
+	buf := make([]byte, len(msg))
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatalf("read echo: %v", err)
+	}
+	if string(buf) != string(msg) {
+		t.Fatalf("echo = %q, want %q", buf, msg)
+	}
+}
+
+func TestSOCKS5CustomDialerPipe(t *testing.T) {
+	pipeDialer := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		server, client := net.Pipe()
+		go func() {
+			defer server.Close()
+			io.Copy(server, server)
+		}()
+		return client, nil
+	}
+
+	_, proxyAddr := startTestProxyWithDialer(t, pipeDialer)
+
+	conn, err := socks5Connect(proxyAddr, "192.168.1.1:80")
+	if err != nil {
+		t.Fatalf("socks5 connect: %v", err)
+	}
+	defer conn.Close()
+
+	msg := []byte("pipe echo test")
+	conn.Write(msg)
+
+	buf := make([]byte, len(msg))
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatalf("read echo: %v", err)
+	}
+	if string(buf) != string(msg) {
+		t.Fatalf("echo = %q, want %q", buf, msg)
+	}
+}
+
+func TestSOCKS5NilDialerUsesDefault(t *testing.T) {
+	echoAddr := startEchoServer(t)
+	_, proxyAddr := startTestProxyWithDialer(t, nil)
+
+	conn, err := socks5Connect(proxyAddr, echoAddr)
+	if err != nil {
+		t.Fatalf("socks5 connect: %v", err)
+	}
+	defer conn.Close()
+
+	msg := []byte("nil dialer default path")
+	conn.Write(msg)
+
+	buf := make([]byte, len(msg))
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatalf("read echo: %v", err)
+	}
+	if string(buf) != string(msg) {
+		t.Fatalf("echo = %q, want %q", buf, msg)
+	}
+}
