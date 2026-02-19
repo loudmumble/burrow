@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -11,62 +12,78 @@ import (
 )
 
 var pivotCmd = &cobra.Command{
-	Use:   "pivot <hop1> <hop2> [hop3...]",
-	Short: "Create a multi-hop pivot chain",
-	Long: `Create a multi-hop pivot chain through multiple hosts.
+	Use:   "pivot",
+	Short: "Multi-hop pivot chain setup",
+	Long: `Create a multi-hop pivot chain through one or more hosts.
 
-Each hop is specified as host:port. Traffic is tunneled through
-each hop in sequence.
+Connects through each hop sequentially and optionally opens a local
+listener for forwarding traffic through the chain.
 
 Example:
-  burrow pivot 10.0.0.1:22 10.0.0.2:22 10.0.0.3:443
-  burrow pivot --user admin --key ~/.ssh/id_rsa 192.168.1.1:22 192.168.2.1:22`,
-	Args: cobra.MinimumNArgs(1),
+  burrow pivot --target 10.0.0.1 --port 8443
+  burrow pivot --target 10.0.0.1 --port 8443 --hop 10.0.0.2:22 --hop 10.0.0.3:443
+  burrow pivot --target 10.0.0.1 --port 8443 --local-port 1080`,
 	Run: func(cmd *cobra.Command, args []string) {
-		user, _ := cmd.Flags().GetString("user")
-		keyPath, _ := cmd.Flags().GetString("key")
+		target, _ := cmd.Flags().GetString("target")
+		port, _ := cmd.Flags().GetInt("port")
+		hopsFlag, _ := cmd.Flags().GetStringSlice("hop")
 		localPort, _ := cmd.Flags().GetInt("local-port")
 
-		hops := make([]pivot.Hop, len(args))
-		for i, hop := range args {
-			h, p := parseEndpoint(hop)
-			hops[i] = pivot.Hop{
-				Host: h,
-				Port: p,
-				User: user,
-				Key:  keyPath,
-			}
+		var hops []pivot.Hop
+
+		for _, hopStr := range hopsFlag {
+			h, p := parseEndpoint(hopStr)
+			hops = append(hops, pivot.Hop{Host: h, Port: p})
 		}
+
+		hops = append(hops, pivot.Hop{Host: target, Port: port})
 
 		chain := pivot.NewChain(hops)
 
-		fmt.Printf("Creating pivot chain through %d hops:\n", len(hops))
+		fmt.Printf("[*] Pivot chain through %d hop(s):\n", len(hops))
 		for i, hop := range hops {
-			fmt.Printf("  %d. %s:%d\n", i+1, hop.Host, hop.Port)
+			fmt.Printf("    %d. %s\n", i+1, hop.Endpoint())
 		}
 
 		if err := chain.Establish(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error establishing chain: %v\n", err)
+			fmt.Fprintf(os.Stderr, "[!] Chain establishment failed: %v\n", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("\nPivot chain active!\n")
-		fmt.Printf("Local endpoint: 127.0.0.1:%d\n", localPort)
-		fmt.Printf("Final target reachable via: %s\n", chain.Route())
+		fmt.Printf("[*] Chain active! Route: %s\n", chain.Route())
+		fmt.Printf("[*] Total latency: %v\n", chain.Latency())
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		if localPort > 0 {
+			listenAddr := fmt.Sprintf("127.0.0.1:%d", localPort)
+			if err := chain.StartListener(ctx, listenAddr); err != nil {
+				fmt.Fprintf(os.Stderr, "[!] Listener error: %v\n", err)
+				chain.Close()
+				os.Exit(1)
+			}
+			fmt.Printf("[*] Local listener on %s\n", listenAddr)
+		}
+
+		fmt.Println("[*] Press Ctrl+C to stop.")
 
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-		fmt.Println("\nPress Ctrl+C to stop.")
 		<-sigChan
 
+		fmt.Println("\n[*] Closing pivot chain...")
+		cancel()
 		chain.Close()
-		fmt.Println("\nPivot chain closed.")
+		fmt.Println("[*] Done.")
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(pivotCmd)
-	pivotCmd.Flags().StringP("user", "u", "", "SSH username for hops")
-	pivotCmd.Flags().StringP("key", "k", "", "SSH private key path")
-	pivotCmd.Flags().IntP("local-port", "l", 1080, "Local SOCKS port")
+	pivotCmd.Flags().StringP("target", "t", "", "Final target host")
+	pivotCmd.Flags().IntP("port", "p", 8443, "Final target port")
+	pivotCmd.Flags().StringSlice("hop", nil, "Intermediate hops (host:port), can be repeated")
+	pivotCmd.Flags().Int("local-port", 0, "Open local listener on this port (0 = disabled)")
+	pivotCmd.MarkFlagRequired("target")
 }

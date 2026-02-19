@@ -7,21 +7,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	version = "1.0.0"
-)
+var version = "1.0.0"
 
 var rootCmd = &cobra.Command{
 	Use:   "burrow",
-	Short: "One-command network pivoting and tunneling",
-	Long: `Burrow is a network tunneling and pivoting tool.
+	Short: "Network pivoting and tunneling tool",
+	Long: `Burrow — One-command network pivoting and tunneling.
 
-Provides:
-  - Local port forwarding (forward traffic to remote target)
-  - Reverse port forwarding (expose local service remotely)
-  - SOCKS5 proxy server
-  - Multi-hop pivot chains
-  - Network discovery for pivot targets`,
+Part of the Agent-HQ Attack Suite. Provides:
+  - SOCKS5 proxy server (RFC 1928)
+  - Local/remote TCP port forwarding
+  - Reverse tunnel with keepalive and auto-reconnect
+  - Multi-hop pivot chain orchestration
+  - Network topology discovery (ping sweep + port scan)`,
 	Version: version,
 }
 

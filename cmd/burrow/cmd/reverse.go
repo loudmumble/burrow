@@ -1,8 +1,8 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
-	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -11,55 +11,54 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var reverseCmd = &cobra.Command{
+var tunnelReverseCmd = &cobra.Command{
 	Use:   "reverse",
-	Short: "Create a reverse tunnel",
-	Long: `Create a reverse tunnel where the remote side listens and 
-forwards connections back to a local service.
+	Short: "Reverse tunnel with keepalive and auto-reconnect",
+	Long: `Create a reverse tunnel that connects outbound to an agent/controller
+with keepalive heartbeats and exponential backoff reconnection.
 
 Example:
-  burrow reverse -l 0.0.0.0:8080 -t 127.0.0.1:3000
-  # Remote users connecting to port 8080 reach your local port 3000`,
+  burrow tunnel reverse --agent-addr 10.0.0.1:8443
+  burrow tunnel reverse --agent-addr 10.0.0.1:8443 --local-target 127.0.0.1:22`,
 	Run: func(cmd *cobra.Command, args []string) {
-		listen, _ := cmd.Flags().GetString("listen")
-		target, _ := cmd.Flags().GetString("target")
+		agentAddr, _ := cmd.Flags().GetString("agent-addr")
+		localTarget, _ := cmd.Flags().GetString("local-target")
+		maxRetries, _ := cmd.Flags().GetInt("max-retries")
 
-		lhost, lport := parseEndpoint(listen)
-		thost, tport := parseEndpoint(target)
+		cfg := tunnel.DefaultReverseConfig()
+		cfg.AgentAddr = agentAddr
+		cfg.LocalTarget = localTarget
+		cfg.MaxRetries = maxRetries
 
-		t := tunnel.NewReverseTunnel(lhost, lport, thost, tport)
+		rt := tunnel.NewReverseTunnelWithConfig(cfg)
 
-		fmt.Printf("Creating reverse tunnel: %s:%d -> %s:%d\n", lhost, lport, thost, tport)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-		if err := t.Start(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Printf("[*] Reverse tunnel: %s -> %s\n", agentAddr, localTarget)
+		fmt.Printf("[*] Max retries: %d, Keepalive: %v\n", maxRetries, cfg.KeepaliveInterval)
+
+		if err := rt.StartWithContext(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "[!] Error: %v\n", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("Reverse tunnel active on %s:%d\n", lhost, lport)
-		fmt.Println("Press Ctrl+C to stop.")
+		fmt.Printf("[*] Reverse tunnel active on %s. Press Ctrl+C to stop.\n", rt.Addr())
 
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
 
-		t.Stop()
-		fmt.Println("\nTunnel closed.")
+		fmt.Println("\n[*] Shutting down...")
+		cancel()
+		rt.Stop()
 	},
 }
 
 func init() {
-	rootCmd.AddCommand(reverseCmd)
-	reverseCmd.Flags().StringP("listen", "l", "0.0.0.0:8443", "Remote listen address")
-	reverseCmd.Flags().StringP("target", "t", "127.0.0.1:22", "Local target address")
-}
+	tunnelCmd.AddCommand(tunnelReverseCmd)
 
-func parseEndpointSimple(endpoint string) (string, int) {
-	host, portStr, err := net.SplitHostPort(endpoint)
-	if err != nil {
-		return endpoint, 0
-	}
-	port := 0
-	fmt.Sscanf(portStr, "%d", &port)
-	return host, port
+	tunnelReverseCmd.Flags().String("agent-addr", "0.0.0.0:8443", "Agent/controller address to connect to")
+	tunnelReverseCmd.Flags().String("local-target", "127.0.0.1:22", "Local target to forward to")
+	tunnelReverseCmd.Flags().Int("max-retries", 10, "Maximum reconnection attempts")
 }

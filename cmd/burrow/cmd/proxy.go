@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/loudmumble/burrow/internal/proxy"
@@ -12,49 +14,71 @@ import (
 
 var proxyCmd = &cobra.Command{
 	Use:   "proxy",
-	Short: "Start a SOCKS5 proxy server",
-	Long: `Start a SOCKS5 proxy server that can be used to route
-traffic through the current host.
+	Short: "Proxy server commands",
+}
+
+var proxySocks5Cmd = &cobra.Command{
+	Use:   "socks5",
+	Short: "Start a SOCKS5 proxy server (RFC 1928)",
+	Long: `Start a SOCKS5 proxy server for routing traffic through the current host.
 
 Example:
-  burrow proxy --addr 127.0.0.1 --port 1080
-  burrow proxy -a 0.0.0.0 -p 9050 --auth user:pass`,
+  burrow proxy socks5 --listen 127.0.0.1:1080
+  burrow proxy socks5 --listen 0.0.0.0:9050 --auth user:pass`,
 	Run: func(cmd *cobra.Command, args []string) {
-		addr, _ := cmd.Flags().GetString("addr")
-		port, _ := cmd.Flags().GetInt("port")
+		listen, _ := cmd.Flags().GetString("listen")
 		auth, _ := cmd.Flags().GetString("auth")
+
+		host, port := parseEndpoint(listen)
 
 		var username, password string
 		if auth != "" {
-			fmt.Sscanf(auth, "%[^:]:%s", &username, &password)
+			parts := strings.SplitN(auth, ":", 2)
+			username = parts[0]
+			if len(parts) > 1 {
+				password = parts[1]
+			}
 		}
 
-		p := proxy.NewSOCKS5(addr, port, username, password)
+		p := proxy.NewSOCKS5(host, port, username, password)
 
-		fmt.Printf("Starting SOCKS5 proxy on %s:%d\n", addr, port)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		fmt.Printf("[*] Starting SOCKS5 proxy on %s\n", listen)
 		if username != "" {
-			fmt.Printf("Authentication: %s:****\n", username)
+			fmt.Printf("[*] Authentication: %s:****\n", username)
 		}
 
-		if err := p.Start(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-		fmt.Printf("SOCKS5 proxy active. Press Ctrl+C to stop.\n")
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- p.StartWithContext(ctx)
+		}()
 
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-		<-sigChan
 
-		p.Stop()
-		fmt.Println("\nProxy stopped.")
+		select {
+		case err := <-errCh:
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[!] Error: %v\n", err)
+				os.Exit(1)
+			}
+		case <-sigChan:
+			fmt.Println("\n[*] Shutting down...")
+			cancel()
+			p.Stop()
+		}
+
+		active, total, bIn, bOut := p.Stats()
+		fmt.Printf("[*] Stats: %d active, %d total, %d bytes in, %d bytes out\n", active, total, bIn, bOut)
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(proxyCmd)
-	proxyCmd.Flags().StringP("addr", "a", "127.0.0.1", "Listen address")
-	proxyCmd.Flags().IntP("port", "p", 1080, "Listen port")
-	proxyCmd.Flags().String("auth", "", "Authentication (username:password)")
+	proxyCmd.AddCommand(proxySocks5Cmd)
+
+	proxySocks5Cmd.Flags().StringP("listen", "l", "127.0.0.1:1080", "Listen address (host:port)")
+	proxySocks5Cmd.Flags().String("auth", "", "Authentication (username:password)")
 }
