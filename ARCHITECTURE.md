@@ -1,28 +1,83 @@
 # Burrow Architecture
 
-## Module Overview
+## Package Map
 
 ```
-src/burrow/
-  cli.py        Click CLI entry point (pivot, tunnel, proxy, scan)
-  config.py     BurrowConfig via Pydantic (listen/remote addr, proxy type, encryption, hop chain)
-  proxy.py      SOCKS5 proxy — RFC 1928 protocol parsing and connection handling
-  tunnel.py     TCP port forwarding — local and remote forward management
-  reverse.py    Reverse tunnel connections with keepalive and reconnect
-  pivot.py      Multi-hop pivot chain — route optimization and sequential setup
-  discovery.py  Network topology auto-discovery — subnet scan, gateway ID, graph building
-  crypto.py     WireGuard-style encryption — X25519 key exchange, ChaCha20-Poly1305/AES-256-GCM
+cmd/burrow/cmd/
+  root.go              Cobra root command, version 2.0.0
+  proxy.go             SOCKS5 proxy command
+  forward.go           Local port forward command
+  reverse.go           Reverse tunnel command
+  pivot.go             Multi-hop pivot command
+  discover.go          Subnet scan command
+  server.go            Proxy server command (listens for agents)
+  agent.go             Agent command (connects back to proxy server)
+  session.go           Session list/info/use commands
+
+internal/crypto/       X25519 ECDH + ChaCha20-Poly1305/AES-256-GCM frame encryption
+internal/proxy/        SOCKS5 server implementing RFC 1928
+internal/tunnel/       Local, remote, and reverse TCP port forwarders
+internal/pivot/        Multi-hop chain orchestration
+internal/discovery/    Ping sweep + TCP port scanner
+internal/certgen/      Ed25519 self-signed TLS cert generation + SHA256 fingerprint
+internal/transport/    WebSocket transport wrapping nhooyr.io/websocket as net.Conn
+internal/mux/          yamux stream multiplexer (stream 0 = control, N = data)
+internal/protocol/     Binary message protocol (12 types, JSON payload, 1MB max)
+internal/session/      Agent session manager, proxy server, web.SessionProvider
+internal/tun/          TUN device + magic IP 240.0.0.0/4 + IPv4 packet parser
+internal/udp/          UDP port forwarder with per-client tracking + idle reaper
+internal/netstack/     gvisor userspace TCP/IP (agent-side packet termination)
+internal/web/          Embedded WebUI: REST API + SSE + Alpine.js/Pico CSS dashboard
 ```
 
-## Data Flow
+## Agent Data Flow (Transparent VPN Mode)
 
 ```
-[Operator] --> burrow CLI --> PivotChain --> TunnelManager --> SOCKS5Proxy
-                                  |              |
-                            NetworkDiscovery  TunnelCrypto
-                                  |              |
-                            ReverseConnector <---+
+Operator Side (root required)                 Agent Side (no root)
++-----------+                                 +-------------+
+|  TUN      |  raw IP packets                 | netstack    |
+|  240.0.0.x| -----> yamux stream 1+ -------> | (gvisor)    |
+|  device   | <----- yamux stream 1+ <------- | TCP/UDP     |
++-----------+                                 | forwarder   |
+      |                                       +------+------+
+      v                                              |
+  Operator's                                   net.Dial() to
+  routing table                                real targets on
+  routes 240.0.0.0/4                           agent's network
+  through TUN
+
+Control channel (yamux stream 0):
+  MsgHandshake / MsgHandshakeAck  -- agent registration
+  MsgTunnelRequest / MsgTunnelAck -- create port forwards
+  MsgRouteAdd / MsgRouteRemove    -- manage routes
+  MsgTunnelClose                  -- tear down
 ```
+
+## Port Forward Data Flow (Tunnel Mode)
+
+```
+Operator                    Agent
+burrow tunnel local         burrow agent
+  :8080 ----TCP----> yamux stream N ----TCP----> 10.0.0.5:80
+```
+
+## WebUI Architecture
+
+```
+Browser --> GET /static/* --> embedded Alpine.js + Pico CSS SPA
+        --> GET /api/sessions --> JSON session list
+        --> GET /api/sessions/{id}/tunnels --> JSON tunnel list
+        --> POST /api/sessions/{id}/tunnels --> create tunnel
+        --> GET /api/events --> SSE stream (live session/tunnel updates)
+```
+
+## Security Model
+
+- Agent-to-server: TLS with auto-generated Ed25519 self-signed certs
+- Fingerprint verification: SHA256 hash of cert DER, verified on agent connect
+- WebSocket mode: TLS over HTTPS for firewall evasion (looks like normal HTTPS)
+- Frame encryption: X25519 ECDH key exchange, HKDF-SHA256 derivation, AEAD per frame
+- Key rotation: hourly, with 4-byte counter for anti-replay
 
 ## Integration Points
 

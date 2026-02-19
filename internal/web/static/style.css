@@ -1,0 +1,47 @@
+:root {
+  --status-active: #2ecc71;
+  --status-inactive: #e74c3c;
+  --card-selected: rgba(46, 204, 113, 0.15);
+}
+
+nav h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+.session-card {
+  cursor: pointer;
+  transition: background-color 0.2s;
+  margin-bottom: 0.5rem;
+}
+
+.session-card:hover {
+  opacity: 0.9;
+}
+
+.session-card.selected {
+  background-color: var(--card-selected);
+  border-left: 3px solid var(--status-active);
+}
+
+.status-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 0.5rem;
+  vertical-align: middle;
+}
+
+.status-dot.active {
+  background-color: var(--status-active);
+}
+
+.status-dot.inactive {
+  background-color: var(--status-inactive);
+}
+
+button.outline.secondary {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8rem;
+}

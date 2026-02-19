@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Burrow Dashboard</title>
+  <link rel="stylesheet" href="/static/pico.min.css">
+  <script defer src="/static/alpine.min.js"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="container" x-data="dashboard()" x-init="init()">
+    <nav>
+      <ul>
+        <li><h1>Burrow</h1></li>
+      </ul>
+      <ul>
+        <li><small x-text="sessions.length + ' agents connected'"></small></li>
+      </ul>
+    </nav>
+
+    <div class="grid">
+      <div>
+        <h2>Sessions</h2>
+        <template x-for="s in sessions" :key="s.id">
+          <article class="session-card" @click="selectSession(s.id)"
+                   :class="{'selected': selected === s.id}">
+            <header>
+              <span class="status-dot" :class="s.active ? 'active' : 'inactive'"></span>
+              <strong x-text="s.hostname"></strong>
+            </header>
+            <p x-text="s.os + ' | ' + (s.ips || []).join(', ')"></p>
+            <footer>
+              <small x-text="s.tunnel_count + ' tunnels, ' + s.route_count + ' routes'"></small>
+            </footer>
+          </article>
+        </template>
+        <p x-show="sessions.length === 0">No sessions connected.</p>
+      </div>
+
+      <div x-show="selected">
+        <h2>Tunnels</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Direction</th><th>Listen</th><th>Remote</th><th>Proto</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="t in tunnels" :key="t.id">
+              <tr>
+                <td x-text="t.direction"></td>
+                <td x-text="t.listen_addr"></td>
+                <td x-text="t.remote_addr"></td>
+                <td x-text="t.protocol"></td>
+                <td><button class="outline secondary" @click="removeTunnel(t.id)">X</button></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+        <form @submit.prevent="addTunnel()">
+          <div class="grid">
+            <select x-model="newTunnel.direction">
+              <option value="local">Local</option>
+              <option value="remote">Remote</option>
+              <option value="reverse">Reverse</option>
+            </select>
+            <input type="text" placeholder="Listen addr" x-model="newTunnel.listen">
+            <input type="text" placeholder="Remote addr" x-model="newTunnel.remote">
+            <select x-model="newTunnel.protocol">
+              <option value="tcp">TCP</option>
+              <option value="udp">UDP</option>
+            </select>
+            <button type="submit">Add</button>
+          </div>
+        </form>
+
+        <h2>Routes</h2>
+        <table>
+          <thead>
+            <tr><th>CIDR</th><th></th></tr>
+          </thead>
+          <tbody>
+            <template x-for="rt in routes" :key="rt.cidr">
+              <tr>
+                <td x-text="rt.cidr"></td>
+                <td><button class="outline secondary" @click="removeRoute(rt.cidr)">X</button></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+        <form @submit.prevent="addRoute()">
+          <div class="grid">
+            <input type="text" placeholder="10.0.0.0/24" x-model="newRoute.cidr">
+            <button type="submit">Add</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
