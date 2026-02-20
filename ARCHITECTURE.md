@@ -81,6 +81,6 @@ Browser --> GET /static/* --> embedded Alpine.js + Pico CSS SPA
 
 ## Integration Points
 
-- **HOG**: Post-exploitation tunneling for lateral movement
+- Post-exploitation tunneling for lateral movement
 - **Phantom**: Internal network scanning through pivots
 - **Sentinel**: Encrypted C2 channel relay
