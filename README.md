@@ -1,29 +1,86 @@
 # Burrow
 
-Network pivoting, tunneling, and agent management. v2.0.0.
+Multi-transport pivot tool for post-exploitation network traversal. v3.0.0.
 
 ## Overview
 
-Burrow is a static Go binary for post-exploitation network traversal. It combines SOCKS5 proxying, local/remote/reverse TCP port forwarding, multi-hop pivot chains, and subnet scanning from v1 with new agent-based pivoting: TUN interface with magic IP routing, WebSocket transport for firewall evasion, multiplexed sessions via yamux, an embedded WebUI dashboard, and userspace TCP/IP via gvisor netstack for transparent network access through compromised hosts.
+Burrow is a static Go binary for post-exploitation network traversal. v3 introduces a pluggable transport architecture: any tunnel (SOCKS5, relay, pivot chain) runs over any transport (Raw TCP/TLS, WebSocket, DNS tunnel, ICMP tunnel). Non-root mode routes sessions through SOCKS5 instead of TUN. Includes a socat-style relay subcommand.
 
 All tunnel traffic is encrypted with X25519 key exchange and ChaCha20-Poly1305 or AES-256-GCM. Agent connections use TLS with certificate fingerprint verification.
 
 ## Install / Build
 
-Requires Go 1.23+. A pre-built linux/amd64 binary is in `build/`.
+Requires Go 1.24+. Pre-built binaries for 5 platforms are in `build/`.
 
 ```bash
 # Use pre-built binary
-./build/burrow --help
+./build/burrow-linux-amd64 --help
 
-# Or build from source
-make build          # produces build/burrow
+# Build for current platform
+make build          # -> build/burrow
 
-# Manual build (no Make)
-~/go-sdk/go/bin/go build -ldflags="-s -w" -o burrow .
+# Cross-compile all platforms
+make build-all
 ```
 
+### Pre-compiled Binaries
+
+| File | Platform |
+|------|----------|
+| `build/burrow-linux-amd64` | Linux x86_64 |
+| `build/burrow-linux-arm64` | Linux ARM64 |
+| `build/burrow-windows-amd64.exe` | Windows x86_64 |
+| `build/burrow-darwin-amd64` | macOS Intel |
+| `build/burrow-darwin-arm64` | macOS Apple Silicon |
+
+## Transports
+
+Select transport with `--transport <name>` on both server and agent.
+
+| Transport | Flag | Notes |
+|-----------|------|-------|
+| Raw TCP/TLS | `raw` | Default. TLS with cert fingerprint verification. |
+| WebSocket | `ws` | HTTP/HTTPS upgrade. Firewall evasion. |
+| DNS tunnel | `dns` | Encodes traffic in DNS queries/responses. |
+| ICMP tunnel | `icmp` | Encodes traffic in ICMP echo payloads. |
+
 ## Usage
+
+### Server (operator side)
+
+```bash
+burrow server                                          # Raw TCP, auto-TLS
+burrow server --listen 0.0.0.0:11601 --transport ws   # WebSocket
+burrow server --listen 0.0.0.0:53 --transport dns     # DNS tunnel
+burrow server --listen 0.0.0.0:0 --transport icmp     # ICMP tunnel
+burrow server --webui                                  # Enable WebUI dashboard
+```
+
+### Agent (target side)
+
+```bash
+burrow agent --server 10.0.0.1:11601
+burrow agent --server 10.0.0.1:11601 --transport ws
+burrow agent --server 10.0.0.1:11601 --transport dns
+burrow agent --server 10.0.0.1:11601 --transport icmp
+burrow agent --server 10.0.0.1:11601 --fingerprint SHA256:abc123...
+```
+
+### Relay (socat-style)
+
+```bash
+burrow relay tcp:0.0.0.0:8080 tcp:10.0.0.5:80
+burrow relay tcp:0.0.0.0:8080 ws:10.0.0.5:443
+burrow relay stdio tcp:10.0.0.5:4444
+```
+
+### Session Management
+
+```bash
+burrow session list
+burrow session info <id>
+burrow session use <id>
+```
 
 ### Standalone Tools (v1 features)
 
@@ -48,50 +105,35 @@ burrow pivot --target 10.0.0.1 --port 8443
 burrow scan --subnet 10.0.0.0/24
 ```
 
-### Agent Mode (v2 features)
-
-```bash
-# Start proxy server (operator side) -- auto-generates TLS cert
-burrow server
-burrow server --listen 0.0.0.0:11601 --webui
-burrow server --ws --listen 0.0.0.0:443
-
-# Connect agent back to proxy server (target side)
-burrow agent --server 10.0.0.1:11601
-burrow agent --server 10.0.0.1:11601 --fingerprint SHA256:abc123...
-burrow agent --ws --server https://10.0.0.1:443
-
-# Session management
-burrow session list
-burrow session info <id>
-burrow session use <id>
-```
-
 ## Testing
 
 ```bash
-~/go-sdk/go/bin/go test ./...
+~/go1.24/go/bin/go test ./...
 ```
 
-156 tests pass across 15 packages.
+20 packages, all passing.
 
 ## Architecture
 
 ```
-cmd/burrow/cmd/          CLI (cobra) -- proxy, tunnel, server, agent, session, scan
+cmd/burrow/cmd/          CLI (cobra) -- server, agent, relay, session, proxy, tunnel, scan
 internal/
+  transport/             Transport interface + registry
+    raw/                 Raw TCP with TLS
+    ws/                  WebSocket (nhooyr.io/websocket)
+    dns/                 DNS tunnel
+    icmp/                ICMP tunnel
   crypto/                X25519 ECDH + ChaCha20-Poly1305/AES-256-GCM frame encryption
-  proxy/                 SOCKS5 server (RFC 1928)
+  proxy/                 SOCKS5 server (RFC 1928) + session routing (non-root mode)
   tunnel/                Local, remote, and reverse TCP forwarders
+  relay/                 Socat-style bidirectional relay
   pivot/                 Multi-hop chain orchestration
   discovery/             Ping sweep + port scanner
   certgen/               Self-signed TLS cert generation (Ed25519) + SHA256 fingerprint
-  transport/             WebSocket transport over HTTP/HTTPS (nhooyr.io/websocket)
   mux/                   yamux stream multiplexer for agent sessions
   protocol/              Binary message protocol (12 types, JSON payloads, 1MB max)
   session/               Agent session manager + proxy server + web.SessionProvider
-  tun/                   TUN interface with magic IP 240.0.0.0/4 routing
-  udp/                   UDP port forwarding with per-client tracking
+  tun/                   TUN interface with magic IP 240.0.0.0/4 routing (root mode)
   netstack/              gvisor userspace TCP/IP for agent-side packet termination
   web/                   Embedded WebUI (Alpine.js + Pico CSS) with REST API + SSE
 ```
