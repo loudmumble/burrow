@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
@@ -11,6 +13,8 @@ import (
 	"time"
 
 	"github.com/loudmumble/burrow/internal/certgen"
+	"github.com/loudmumble/burrow/internal/mux"
+	"github.com/loudmumble/burrow/internal/protocol"
 	"github.com/loudmumble/burrow/internal/session"
 	"github.com/loudmumble/burrow/internal/transport"
 	_ "github.com/loudmumble/burrow/internal/transport/dns"
@@ -144,9 +148,127 @@ func runServer(cmd *cobra.Command, _ []string) {
 	cancel()
 }
 
-func handleAgentConn(conn net.Conn, _ *session.Manager) {
-	// TODO: Handle incoming agent connections —
-	// create mux session, read handshake, register with manager.
+func handleAgentConn(conn net.Conn, mgr *session.Manager) {
+	defer conn.Close()
+
 	fmt.Printf("[*] New agent connection from %s\n", conn.RemoteAddr())
-	conn.Close()
+
+	sess, err := mux.NewServerSession(conn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[!] Mux session error from %s: %v\n", conn.RemoteAddr(), err)
+		return
+	}
+	defer sess.Close()
+	ctrl, err := sess.Accept()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[!] Accept control stream from %s: %v\n", conn.RemoteAddr(), err)
+		return
+	}
+	defer ctrl.Close()
+	msg, err := protocol.ReadMessage(ctrl)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[!] Read handshake from %s: %v\n", conn.RemoteAddr(), err)
+		return
+	}
+	handshake, err := protocol.DecodeHandshake(msg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[!] Decode handshake from %s: %v\n", conn.RemoteAddr(), err)
+		return
+	}
+	sessionID := newSessionID()
+	info := &session.Info{
+		ID:        sessionID,
+		Hostname:  handshake.Hostname,
+		OS:        handshake.OS,
+		IPs:       handshake.IPs,
+		PID:       handshake.PID,
+		Remote:    conn.RemoteAddr().String(),
+		CreatedAt: time.Now(),
+		Active:    true,
+	}
+	mgr.Add(info)
+	defer mgr.Remove(sessionID)
+	ackPayload := &protocol.HandshakeAckPayload{
+		SessionID:    sessionID,
+		ProxyVersion: version,
+	}
+	ackMsg, err := protocol.EncodeHandshakeAck(ackPayload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[!] Encode handshake ack: %v\n", err)
+		return
+	}
+	if err := protocol.WriteMessage(ctrl, ackMsg); err != nil {
+		fmt.Fprintf(os.Stderr, "[!] Send handshake ack to %s: %v\n", conn.RemoteAddr(), err)
+		return
+	}
+
+	fmt.Printf("[*] Agent registered: session=%s host=%s os=%s ips=%v\n",
+		sessionID, handshake.Hostname, handshake.OS, handshake.IPs)
+	if err := serverCommandLoop(ctrl); err != nil {
+		fmt.Fprintf(os.Stderr, "[!] Session %s lost: %v\n", sessionID, err)
+	}
+
+	fmt.Printf("[*] Agent disconnected: session=%s\n", sessionID)
+}
+
+// serverCommandLoop sends periodic pings to keep the agent alive and reads
+// any replies. It returns when the underlying connection fails.
+func serverCommandLoop(ctrl net.Conn) error {
+	const pingInterval = 30 * time.Second
+	const pingWriteTimeout = 10 * time.Second
+
+	msgCh := make(chan *protocol.Message, 4)
+	errCh := make(chan error, 1)
+
+	go func() {
+		for {
+			msg, err := protocol.ReadMessage(ctrl)
+			if err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+				return
+			}
+			msgCh <- msg
+		}
+	}()
+
+	ticker := time.NewTicker(pingInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case err := <-errCh:
+			return err
+
+		case msg := <-msgCh:
+			switch msg.Type {
+			case protocol.MsgPong:
+			case protocol.MsgError:
+				errStr, _ := protocol.DecodeError(msg)
+				return fmt.Errorf("agent error: %s", errStr)
+			default:
+				fmt.Fprintf(os.Stderr, "[!] Unexpected message from agent: %s\n", msg.Type)
+			}
+
+		case <-ticker.C:
+			ctrl.SetWriteDeadline(time.Now().Add(pingWriteTimeout))
+			if err := protocol.WriteMessage(ctrl, protocol.NewPing()); err != nil {
+				ctrl.SetWriteDeadline(time.Time{})
+				return fmt.Errorf("ping failed: %w", err)
+			}
+			ctrl.SetWriteDeadline(time.Time{})
+		}
+	}
+}
+
+// newSessionID returns a random 8-byte hex session identifier.
+func newSessionID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp if crypto/rand is unavailable.
+		return fmt.Sprintf("%x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
 }

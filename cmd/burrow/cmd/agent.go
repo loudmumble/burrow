@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -138,16 +140,38 @@ func dialServer(ctx context.Context, addr, fingerprint string, noTLS bool, trans
 	return t.Dial(ctx, addr, tlsCfg)
 }
 
+// buildClientTLSConfig returns a client TLS config. When a fingerprint is
+// provided the cert chain is not validated by the CA — instead the peer's
+// SHA-256 fingerprint is checked directly. No client certificate is sent
+// because the server does not request mutual TLS.
 func buildClientTLSConfig(fingerprint string) *tls.Config {
-	cfg := &tls.Config{
-		MinVersion: tls.VersionTLS12,
+	if fingerprint == "" {
+		return &tls.Config{
+			MinVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: true,
+		}
 	}
-	if fingerprint != "" {
-		cfg = certgen.TLSConfig(tls.Certificate{}, fingerprint)
-	} else {
-		cfg.InsecureSkipVerify = true
+
+	expected := fingerprint
+	return &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: true,
+		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			if len(rawCerts) == 0 {
+				return errors.New("no peer certificates presented")
+			}
+			cert, err := x509.ParseCertificate(rawCerts[0])
+			if err != nil {
+				return fmt.Errorf("parse peer certificate: %w", err)
+			}
+			actual := certgen.Fingerprint(cert)
+			if actual != expected {
+				return fmt.Errorf("%w: expected %s, got %s",
+					certgen.ErrFingerprintMismatch, expected, actual)
+			}
+			return nil
+		},
 	}
-	return cfg
 }
 
 func agentSession(ctx context.Context, conn net.Conn) error {
@@ -197,81 +221,94 @@ func agentSession(ctx context.Context, conn net.Conn) error {
 }
 
 func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
+	msgCh := make(chan *protocol.Message, 4)
+	errCh := make(chan error, 1)
+
+	go func() {
+		for {
+			msg, err := protocol.ReadMessage(ctrl)
+			if err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+				return
+			}
+			select {
+			case msgCh <- msg:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	for {
-		if ctx.Err() != nil {
+		select {
+		case <-ctx.Done():
 			return nil
-		}
 
-		msg, err := protocol.ReadMessage(ctrl)
-		if err != nil {
+		case err := <-errCh:
 			return fmt.Errorf("read command: %w", err)
-		}
 
-		switch msg.Type {
-		case protocol.MsgPing:
-			if err := protocol.WriteMessage(ctrl, protocol.NewPong()); err != nil {
-				return fmt.Errorf("send pong: %w", err)
+		case msg := <-msgCh:
+			switch msg.Type {
+			case protocol.MsgPing:
+				if err := protocol.WriteMessage(ctrl, protocol.NewPong()); err != nil {
+					return fmt.Errorf("send pong: %w", err)
+				}
+
+			case protocol.MsgTunnelRequest:
+				req, err := protocol.DecodeTunnelRequest(msg)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[!] Bad tunnel request: %v\n", err)
+					continue
+				}
+				fmt.Printf("[*] Tunnel request: %s %s -> %s (%s)\n",
+					req.Direction, req.ListenAddr, req.RemoteAddr, req.Protocol)
+
+				ackPayload := &protocol.TunnelAckPayload{
+					ID:    req.ID,
+					Error: "not yet implemented",
+				}
+				ackMsg, _ := protocol.EncodeTunnelAck(ackPayload)
+				protocol.WriteMessage(ctrl, ackMsg)
+
+			case protocol.MsgRouteAdd:
+				route, err := protocol.DecodeRouteAdd(msg)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[!] Bad route add: %v\n", err)
+					continue
+				}
+				fmt.Printf("[*] Route add: %s via %s (not yet implemented)\n", route.CIDR, route.Gateway)
+
+			case protocol.MsgRouteRemove:
+				route, err := protocol.DecodeRouteRemove(msg)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[!] Bad route remove: %v\n", err)
+					continue
+				}
+				fmt.Printf("[*] Route remove: %s (not yet implemented)\n", route.CIDR)
+
+			case protocol.MsgTunnelClose:
+				tunnelID, _ := protocol.DecodeTunnelClose(msg)
+				fmt.Printf("[*] Tunnel close: %s (not yet implemented)\n", tunnelID)
+
+			case protocol.MsgListenerRequest:
+				req, err := protocol.DecodeListenerRequest(msg)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[!] Bad listener request: %v\n", err)
+					continue
+				}
+				fmt.Printf("[*] Listener request: %s -> %s (not yet implemented)\n",
+					req.ListenAddr, req.ForwardAddr)
+
+			case protocol.MsgError:
+				errStr, _ := protocol.DecodeError(msg)
+				return fmt.Errorf("server error: %s", errStr)
+
+			default:
+				fmt.Fprintf(os.Stderr, "[!] Unknown message type: %s\n", msg.Type)
 			}
-
-		case protocol.MsgTunnelRequest:
-			// TODO: Parse TunnelRequestPayload and create tunnel.
-			// For local direction: tunnel.NewLocalForward over a mux stream.
-			// For remote direction: tunnel.NewRemoteForward over a mux stream.
-			// Send TunnelAck back with bound address or error.
-			req, err := protocol.DecodeTunnelRequest(msg)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "[!] Bad tunnel request: %v\n", err)
-				continue
-			}
-			fmt.Printf("[*] Tunnel request: %s %s -> %s (%s)\n",
-				req.Direction, req.ListenAddr, req.RemoteAddr, req.Protocol)
-
-			ackPayload := &protocol.TunnelAckPayload{
-				ID:    req.ID,
-				Error: "not yet implemented",
-			}
-			ackMsg, _ := protocol.EncodeTunnelAck(ackPayload)
-			protocol.WriteMessage(ctrl, ackMsg)
-
-		case protocol.MsgRouteAdd:
-			// TODO: Apply route via TUN interface or OS routing table.
-			route, err := protocol.DecodeRouteAdd(msg)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "[!] Bad route add: %v\n", err)
-				continue
-			}
-			fmt.Printf("[*] Route add: %s via %s (not yet implemented)\n", route.CIDR, route.Gateway)
-
-		case protocol.MsgRouteRemove:
-			// TODO: Remove route.
-			route, err := protocol.DecodeRouteRemove(msg)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "[!] Bad route remove: %v\n", err)
-				continue
-			}
-			fmt.Printf("[*] Route remove: %s (not yet implemented)\n", route.CIDR)
-
-		case protocol.MsgTunnelClose:
-			// TODO: Stop the referenced tunnel.
-			tunnelID, _ := protocol.DecodeTunnelClose(msg)
-			fmt.Printf("[*] Tunnel close: %s (not yet implemented)\n", tunnelID)
-
-		case protocol.MsgListenerRequest:
-			// TODO: Create listener on agent side.
-			req, err := protocol.DecodeListenerRequest(msg)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "[!] Bad listener request: %v\n", err)
-				continue
-			}
-			fmt.Printf("[*] Listener request: %s -> %s (not yet implemented)\n",
-				req.ListenAddr, req.ForwardAddr)
-
-		case protocol.MsgError:
-			errStr, _ := protocol.DecodeError(msg)
-			return fmt.Errorf("server error: %s", errStr)
-
-		default:
-			fmt.Fprintf(os.Stderr, "[!] Unknown message type: %s\n", msg.Type)
 		}
 	}
 }
