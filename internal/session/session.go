@@ -5,12 +5,16 @@
 package session
 
 import (
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"sync"
 	"time"
 
+	"github.com/loudmumble/burrow/internal/mux"
+	"github.com/loudmumble/burrow/internal/protocol"
 	"github.com/loudmumble/burrow/internal/web"
 )
 
@@ -26,16 +30,27 @@ type Info struct {
 	Active    bool      `json:"active"`
 }
 
+// AgentConn holds the mux session and control stream for a connected agent.
+type AgentConn struct {
+	Info    *Info
+	Mux     *mux.Session
+	Ctrl    net.Conn
+	tunnels map[string]*web.TunnelInfo
+	routes  map[string]*web.RouteInfo
+	mu      sync.RWMutex
+	writeMu sync.Mutex
+}
+
 // Manager tracks all active agent sessions.
 type Manager struct {
-	sessions map[string]*Info
+	sessions map[string]*AgentConn
 	mu       sync.RWMutex
 }
 
 // NewManager creates a new session manager.
 func NewManager() *Manager {
 	return &Manager{
-		sessions: make(map[string]*Info),
+		sessions: make(map[string]*AgentConn),
 	}
 }
 
@@ -44,8 +59,8 @@ func (m *Manager) List() []*Info {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	result := make([]*Info, 0, len(m.sessions))
-	for _, s := range m.sessions {
-		result = append(result, s)
+	for _, ac := range m.sessions {
+		result = append(result, ac.Info)
 	}
 	return result
 }
@@ -54,14 +69,34 @@ func (m *Manager) List() []*Info {
 func (m *Manager) Get(id string) *Info {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.sessions[id]
+	if ac, ok := m.sessions[id]; ok {
+		return ac.Info
+	}
+	return nil
 }
 
-// Add registers a new session.
+// Add registers a new session without a mux connection.
 func (m *Manager) Add(info *Info) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.sessions[info.ID] = info
+	m.sessions[info.ID] = &AgentConn{
+		Info:    info,
+		tunnels: make(map[string]*web.TunnelInfo),
+		routes:  make(map[string]*web.RouteInfo),
+	}
+}
+
+// AddConn registers a new session with its mux session and control stream.
+func (m *Manager) AddConn(info *Info, muxSess *mux.Session, ctrl net.Conn) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sessions[info.ID] = &AgentConn{
+		Info:    info,
+		Mux:     muxSess,
+		Ctrl:    ctrl,
+		tunnels: make(map[string]*web.TunnelInfo),
+		routes:  make(map[string]*web.RouteInfo),
+	}
 }
 
 // Remove deletes a session by ID.
@@ -78,12 +113,54 @@ func (m *Manager) Count() int {
 	return len(m.sessions)
 }
 
+// getConn returns the AgentConn for a session, or nil if not found.
+func (m *Manager) getConn(id string) *AgentConn {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.sessions[id]
+}
+
+// WriteCtrl writes a protocol message to the control stream of the given session.
+// It serializes access to the control stream to prevent interleaved writes.
+func (m *Manager) WriteCtrl(sessionID string, msg *protocol.Message) error {
+	ac := m.getConn(sessionID)
+	if ac == nil || ac.Ctrl == nil {
+		return fmt.Errorf("session %s not connected", sessionID)
+	}
+	ac.writeMu.Lock()
+	defer ac.writeMu.Unlock()
+	return protocol.WriteMessage(ac.Ctrl, msg)
+}
+
+// UpdateTunnelStatus updates a tunnel's status after receiving an ack from the agent.
+func (m *Manager) UpdateTunnelStatus(sessionID, tunnelID, boundAddr, errStr string) {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return
+	}
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+	t, ok := ac.tunnels[tunnelID]
+	if !ok {
+		return
+	}
+	if errStr != "" {
+		t.Active = false
+	} else {
+		t.Active = true
+		if boundAddr != "" {
+			t.ListenAddr = boundAddr
+		}
+	}
+}
+
 // ListSessions implements web.SessionProvider.
 func (m *Manager) ListSessions() []web.SessionInfo {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	result := make([]web.SessionInfo, 0, len(m.sessions))
-	for _, s := range m.sessions {
+	for _, ac := range m.sessions {
+		s := ac.Info
 		result = append(result, web.SessionInfo{
 			ID:        s.ID,
 			Hostname:  s.Hostname,
@@ -100,10 +177,11 @@ func (m *Manager) ListSessions() []web.SessionInfo {
 func (m *Manager) GetSession(id string) (web.SessionInfo, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	s, ok := m.sessions[id]
+	ac, ok := m.sessions[id]
 	if !ok {
 		return web.SessionInfo{}, false
 	}
+	s := ac.Info
 	return web.SessionInfo{
 		ID:        s.ID,
 		Hostname:  s.Hostname,
@@ -115,39 +193,179 @@ func (m *Manager) GetSession(id string) (web.SessionInfo, bool) {
 }
 
 // GetTunnels implements web.SessionProvider.
-// TODO: Track tunnels per session and return real data.
-func (m *Manager) GetTunnels(_ string) []web.TunnelInfo {
-	return nil
+func (m *Manager) GetTunnels(sessionID string) []web.TunnelInfo {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return nil
+	}
+	ac.mu.RLock()
+	defer ac.mu.RUnlock()
+	if len(ac.tunnels) == 0 {
+		return nil
+	}
+	result := make([]web.TunnelInfo, 0, len(ac.tunnels))
+	for _, t := range ac.tunnels {
+		result = append(result, *t)
+	}
+	return result
 }
 
 // GetRoutes implements web.SessionProvider.
-// TODO: Track routes per session and return real data.
-func (m *Manager) GetRoutes(_ string) []web.RouteInfo {
-	return nil
+func (m *Manager) GetRoutes(sessionID string) []web.RouteInfo {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return nil
+	}
+	ac.mu.RLock()
+	defer ac.mu.RUnlock()
+	if len(ac.routes) == 0 {
+		return nil
+	}
+	result := make([]web.RouteInfo, 0, len(ac.routes))
+	for _, r := range ac.routes {
+		result = append(result, *r)
+	}
+	return result
 }
 
 // AddTunnel implements web.SessionProvider.
-// TODO: Send MsgTunnelRequest to agent and return result.
-func (m *Manager) AddTunnel(_, _, _, _, _ string) (web.TunnelInfo, error) {
-	return web.TunnelInfo{}, fmt.Errorf("not implemented")
+// Sends a TunnelRequest to the agent and stores the tunnel optimistically.
+func (m *Manager) AddTunnel(sessionID, direction, listen, remote, proto string) (web.TunnelInfo, error) {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return web.TunnelInfo{}, fmt.Errorf("session %s not found", sessionID)
+	}
+
+	tunnelID := genID()
+
+	if ac.Ctrl != nil {
+		req := &protocol.TunnelRequestPayload{
+			ID:         tunnelID,
+			Direction:  direction,
+			ListenAddr: listen,
+			RemoteAddr: remote,
+			Protocol:   proto,
+		}
+		msg, err := protocol.EncodeTunnelRequest(req)
+		if err != nil {
+			return web.TunnelInfo{}, fmt.Errorf("encode tunnel request: %w", err)
+		}
+		ac.writeMu.Lock()
+		err = protocol.WriteMessage(ac.Ctrl, msg)
+		ac.writeMu.Unlock()
+		if err != nil {
+			return web.TunnelInfo{}, fmt.Errorf("send tunnel request: %w", err)
+		}
+	}
+
+	info := &web.TunnelInfo{
+		ID:         tunnelID,
+		SessionID:  sessionID,
+		Direction:  direction,
+		ListenAddr: listen,
+		RemoteAddr: remote,
+		Protocol:   proto,
+		Active:     true,
+	}
+	ac.mu.Lock()
+	ac.tunnels[tunnelID] = info
+	ac.mu.Unlock()
+
+	return *info, nil
 }
 
 // RemoveTunnel implements web.SessionProvider.
-// TODO: Send MsgTunnelClose to agent.
-func (m *Manager) RemoveTunnel(_, _ string) error {
-	return fmt.Errorf("not implemented")
+// Sends a TunnelClose to the agent and removes the tunnel from tracking.
+func (m *Manager) RemoveTunnel(sessionID, tunnelID string) error {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+
+	if ac.Ctrl != nil {
+		msg := protocol.EncodeTunnelClose(tunnelID)
+		ac.writeMu.Lock()
+		protocol.WriteMessage(ac.Ctrl, msg)
+		ac.writeMu.Unlock()
+	}
+
+	ac.mu.Lock()
+	delete(ac.tunnels, tunnelID)
+	ac.mu.Unlock()
+
+	return nil
 }
 
 // AddRoute implements web.SessionProvider.
-// TODO: Send MsgRouteAdd to agent.
-func (m *Manager) AddRoute(_, _ string) (web.RouteInfo, error) {
-	return web.RouteInfo{}, fmt.Errorf("not implemented")
+// Sends a RouteAdd to the agent and stores the route.
+func (m *Manager) AddRoute(sessionID, cidr string) (web.RouteInfo, error) {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return web.RouteInfo{}, fmt.Errorf("session %s not found", sessionID)
+	}
+
+	if ac.Ctrl != nil {
+		payload := &protocol.RoutePayload{CIDR: cidr, Gateway: "default"}
+		msg, err := protocol.EncodeRouteAdd(payload)
+		if err != nil {
+			return web.RouteInfo{}, fmt.Errorf("encode route add: %w", err)
+		}
+		ac.writeMu.Lock()
+		err = protocol.WriteMessage(ac.Ctrl, msg)
+		ac.writeMu.Unlock()
+		if err != nil {
+			return web.RouteInfo{}, fmt.Errorf("send route add: %w", err)
+		}
+	}
+
+	info := &web.RouteInfo{
+		CIDR:      cidr,
+		SessionID: sessionID,
+		Active:    true,
+	}
+	ac.mu.Lock()
+	ac.routes[cidr] = info
+	ac.mu.Unlock()
+
+	return *info, nil
 }
 
 // RemoveRoute implements web.SessionProvider.
-// TODO: Send MsgRouteRemove to agent.
-func (m *Manager) RemoveRoute(_, _ string) error {
-	return fmt.Errorf("not implemented")
+// Sends a RouteRemove to the agent and removes the route from tracking.
+func (m *Manager) RemoveRoute(sessionID, cidr string) error {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+
+	if ac.Ctrl != nil {
+		payload := &protocol.RoutePayload{CIDR: cidr}
+		msg, err := protocol.EncodeRouteRemove(payload)
+		if err != nil {
+			return fmt.Errorf("encode route remove: %w", err)
+		}
+		ac.writeMu.Lock()
+		err = protocol.WriteMessage(ac.Ctrl, msg)
+		ac.writeMu.Unlock()
+		if err != nil {
+			return fmt.Errorf("send route remove: %w", err)
+		}
+	}
+
+	ac.mu.Lock()
+	delete(ac.routes, cidr)
+	ac.mu.Unlock()
+
+	return nil
+}
+
+// genID returns a random 8-byte hex identifier.
+func genID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
 }
 
 // Server listens for incoming agent connections and creates mux sessions.
@@ -159,7 +377,6 @@ type Server struct {
 	// Manager tracks connected sessions.
 	Manager *Manager
 	// OnConnection is called for each accepted agent connection.
-	// TODO: Replace with full agent handler that reads handshake, creates mux session, etc.
 	OnConnection func(conn net.Conn)
 
 	listener net.Listener
@@ -208,7 +425,7 @@ func (s *Server) Start() error {
 		if s.OnConnection != nil {
 			go s.OnConnection(conn)
 		} else {
-			// TODO: default handler — read handshake, create mux session, register with Manager
+			// Default handler: close connection when no handler is configured.
 			conn.Close()
 		}
 	}

@@ -186,7 +186,7 @@ func handleAgentConn(conn net.Conn, mgr *session.Manager) {
 		CreatedAt: time.Now(),
 		Active:    true,
 	}
-	mgr.Add(info)
+	mgr.AddConn(info, sess, ctrl)
 	defer mgr.Remove(sessionID)
 	ackPayload := &protocol.HandshakeAckPayload{
 		SessionID:    sessionID,
@@ -204,18 +204,15 @@ func handleAgentConn(conn net.Conn, mgr *session.Manager) {
 
 	fmt.Printf("[*] Agent registered: session=%s host=%s os=%s ips=%v\n",
 		sessionID, handshake.Hostname, handshake.OS, handshake.IPs)
-	if err := serverCommandLoop(ctrl); err != nil {
+	if err := serverCommandLoop(ctrl, mgr, sessionID); err != nil {
 		fmt.Fprintf(os.Stderr, "[!] Session %s lost: %v\n", sessionID, err)
 	}
 
 	fmt.Printf("[*] Agent disconnected: session=%s\n", sessionID)
 }
 
-// serverCommandLoop sends periodic pings to keep the agent alive and reads
-// any replies. It returns when the underlying connection fails.
-func serverCommandLoop(ctrl net.Conn) error {
+func serverCommandLoop(ctrl net.Conn, mgr *session.Manager, sessionID string) error {
 	const pingInterval = 30 * time.Second
-	const pingWriteTimeout = 10 * time.Second
 
 	msgCh := make(chan *protocol.Message, 4)
 	errCh := make(chan error, 1)
@@ -245,6 +242,29 @@ func serverCommandLoop(ctrl net.Conn) error {
 		case msg := <-msgCh:
 			switch msg.Type {
 			case protocol.MsgPong:
+			case protocol.MsgTunnelAck:
+				ack, err := protocol.DecodeTunnelAck(msg)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[!] Bad tunnel ack: %v\n", err)
+					continue
+				}
+				mgr.UpdateTunnelStatus(sessionID, ack.ID, ack.BoundAddr, ack.Error)
+				if ack.Error != "" {
+					fmt.Fprintf(os.Stderr, "[!] Tunnel %s error: %s\n", ack.ID, ack.Error)
+				} else {
+					fmt.Printf("[*] Tunnel %s active on %s\n", ack.ID, ack.BoundAddr)
+				}
+			case protocol.MsgListenerAck:
+				ack, err := protocol.DecodeListenerAck(msg)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[!] Bad listener ack: %v\n", err)
+					continue
+				}
+				if ack.Error != "" {
+					fmt.Fprintf(os.Stderr, "[!] Listener %s error: %s\n", ack.ID, ack.Error)
+				} else {
+					fmt.Printf("[*] Listener %s active on %s\n", ack.ID, ack.BoundAddr)
+				}
 			case protocol.MsgError:
 				errStr, _ := protocol.DecodeError(msg)
 				return fmt.Errorf("agent error: %s", errStr)
@@ -253,21 +273,16 @@ func serverCommandLoop(ctrl net.Conn) error {
 			}
 
 		case <-ticker.C:
-			ctrl.SetWriteDeadline(time.Now().Add(pingWriteTimeout))
-			if err := protocol.WriteMessage(ctrl, protocol.NewPing()); err != nil {
-				ctrl.SetWriteDeadline(time.Time{})
+			if err := mgr.WriteCtrl(sessionID, protocol.NewPing()); err != nil {
 				return fmt.Errorf("ping failed: %w", err)
 			}
-			ctrl.SetWriteDeadline(time.Time{})
 		}
 	}
 }
 
-// newSessionID returns a random 8-byte hex session identifier.
 func newSessionID() string {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
-		// Fallback to timestamp if crypto/rand is unavailable.
 		return fmt.Sprintf("%x", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b)

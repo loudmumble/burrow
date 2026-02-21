@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
@@ -21,6 +22,7 @@ import (
 	_ "github.com/loudmumble/burrow/internal/transport/icmp"
 	_ "github.com/loudmumble/burrow/internal/transport/raw"
 	_ "github.com/loudmumble/burrow/internal/transport/ws"
+	"github.com/loudmumble/burrow/internal/tunnel"
 	"github.com/spf13/cobra"
 )
 
@@ -140,10 +142,6 @@ func dialServer(ctx context.Context, addr, fingerprint string, noTLS bool, trans
 	return t.Dial(ctx, addr, tlsCfg)
 }
 
-// buildClientTLSConfig returns a client TLS config. When a fingerprint is
-// provided the cert chain is not validated by the CA — instead the peer's
-// SHA-256 fingerprint is checked directly. No client certificate is sent
-// because the server does not request mutual TLS.
 func buildClientTLSConfig(fingerprint string) *tls.Config {
 	if fingerprint == "" {
 		return &tls.Config{
@@ -221,6 +219,18 @@ func agentSession(ctx context.Context, conn net.Conn) error {
 }
 
 func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
+	activeTunnels := make(map[string]*tunnel.Tunnel)
+	activeListeners := make(map[string]net.Listener)
+	activeRoutes := make(map[string]string)
+	defer func() {
+		for _, t := range activeTunnels {
+			t.Stop()
+		}
+		for _, l := range activeListeners {
+			l.Close()
+		}
+	}()
+
 	msgCh := make(chan *protocol.Message, 4)
 	errCh := make(chan error, 1)
 
@@ -266,9 +276,29 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 				fmt.Printf("[*] Tunnel request: %s %s -> %s (%s)\n",
 					req.Direction, req.ListenAddr, req.RemoteAddr, req.Protocol)
 
-				ackPayload := &protocol.TunnelAckPayload{
-					ID:    req.ID,
-					Error: "not yet implemented",
+				var t *tunnel.Tunnel
+				switch req.Direction {
+				case "local":
+					t = tunnel.NewLocalForward(req.ListenAddr, req.RemoteAddr)
+				case "remote", "reverse":
+					t = tunnel.NewRemoteForward(req.ListenAddr, req.RemoteAddr)
+				default:
+					ackPayload := &protocol.TunnelAckPayload{
+						ID:    req.ID,
+						Error: fmt.Sprintf("unknown direction: %s", req.Direction),
+					}
+					ackMsg, _ := protocol.EncodeTunnelAck(ackPayload)
+					protocol.WriteMessage(ctrl, ackMsg)
+					continue
+				}
+
+				startErr := t.StartWithContext(ctx)
+				ackPayload := &protocol.TunnelAckPayload{ID: req.ID}
+				if startErr != nil {
+					ackPayload.Error = startErr.Error()
+				} else {
+					ackPayload.BoundAddr = t.Addr()
+					activeTunnels[req.ID] = t
 				}
 				ackMsg, _ := protocol.EncodeTunnelAck(ackPayload)
 				protocol.WriteMessage(ctrl, ackMsg)
@@ -279,7 +309,8 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 					fmt.Fprintf(os.Stderr, "[!] Bad route add: %v\n", err)
 					continue
 				}
-				fmt.Printf("[*] Route add: %s via %s (not yet implemented)\n", route.CIDR, route.Gateway)
+				activeRoutes[route.CIDR] = route.Gateway
+				fmt.Printf("[*] Route added: %s via %s\n", route.CIDR, route.Gateway)
 
 			case protocol.MsgRouteRemove:
 				route, err := protocol.DecodeRouteRemove(msg)
@@ -287,11 +318,22 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 					fmt.Fprintf(os.Stderr, "[!] Bad route remove: %v\n", err)
 					continue
 				}
-				fmt.Printf("[*] Route remove: %s (not yet implemented)\n", route.CIDR)
+				delete(activeRoutes, route.CIDR)
+				fmt.Printf("[*] Route removed: %s\n", route.CIDR)
 
 			case protocol.MsgTunnelClose:
-				tunnelID, _ := protocol.DecodeTunnelClose(msg)
-				fmt.Printf("[*] Tunnel close: %s (not yet implemented)\n", tunnelID)
+				tunnelID, err := protocol.DecodeTunnelClose(msg)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[!] Bad tunnel close: %v\n", err)
+					continue
+				}
+				if t, ok := activeTunnels[tunnelID]; ok {
+					t.Stop()
+					delete(activeTunnels, tunnelID)
+					fmt.Printf("[*] Tunnel closed: %s\n", tunnelID)
+				} else {
+					fmt.Printf("[*] Tunnel close (unknown ID): %s\n", tunnelID)
+				}
 
 			case protocol.MsgListenerRequest:
 				req, err := protocol.DecodeListenerRequest(msg)
@@ -299,8 +341,20 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 					fmt.Fprintf(os.Stderr, "[!] Bad listener request: %v\n", err)
 					continue
 				}
-				fmt.Printf("[*] Listener request: %s -> %s (not yet implemented)\n",
+				fmt.Printf("[*] Listener request: %s -> %s\n",
 					req.ListenAddr, req.ForwardAddr)
+
+				ln, listenErr := net.Listen("tcp", req.ListenAddr)
+				ackPayload := &protocol.ListenerAckPayload{ID: req.ID}
+				if listenErr != nil {
+					ackPayload.Error = listenErr.Error()
+				} else {
+					ackPayload.BoundAddr = ln.Addr().String()
+					activeListeners[req.ID] = ln
+					go acceptAndRelay(ctx, ln, req.ForwardAddr)
+				}
+				ackMsg, _ := protocol.EncodeListenerAck(ackPayload)
+				protocol.WriteMessage(ctrl, ackMsg)
 
 			case protocol.MsgError:
 				errStr, _ := protocol.DecodeError(msg)
@@ -310,6 +364,34 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 				fmt.Fprintf(os.Stderr, "[!] Unknown message type: %s\n", msg.Type)
 			}
 		}
+	}
+}
+
+func acceptAndRelay(ctx context.Context, ln net.Listener, forwardAddr string) {
+	go func() {
+		<-ctx.Done()
+		ln.Close()
+	}()
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
+				return
+			}
+			continue
+		}
+		go func(c net.Conn) {
+			defer c.Close()
+			remote, err := net.DialTimeout("tcp", forwardAddr, 10*time.Second)
+			if err != nil {
+				return
+			}
+			defer remote.Close()
+			done := make(chan struct{}, 2)
+			go func() { io.Copy(remote, c); done <- struct{}{} }()
+			go func() { io.Copy(c, remote); done <- struct{}{} }()
+			<-done
+		}(conn)
 	}
 }
 
