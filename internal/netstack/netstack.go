@@ -57,6 +57,7 @@ type Stack struct {
 	ep     *channel.Endpoint
 	mtu    uint32
 	logger *log.Logger
+	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 }
@@ -140,13 +141,14 @@ func New(opts Opts) (*Stack, error) {
 	sackOpt := tcpip.TCPSACKEnabled(false)
 	ns.SetTransportProtocolOption(tcp.ProtocolNumber, &sackOpt)
 
-	_, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &Stack{
 		ns:     ns,
 		ep:     ep,
 		mtu:    opts.MTU,
 		logger: opts.Logger,
+		ctx:    ctx,
 		cancel: cancel,
 	}
 
@@ -223,6 +225,11 @@ func (s *Stack) Close() error {
 // It completes the TCP handshake via gvisor, then dials the real destination
 // on the agent's network and relays data bidirectionally.
 func (s *Stack) handleTCP(req *tcp.ForwarderRequest) {
+	if s.ctx.Err() != nil {
+		req.Complete(true)
+		return
+	}
+
 	id := req.ID()
 	dst := net.JoinHostPort(
 		id.LocalAddress.String(),
@@ -240,7 +247,8 @@ func (s *Stack) handleTCP(req *tcp.ForwarderRequest) {
 
 	netstackConn := gonet.NewTCPConn(&wq, ep)
 
-	remote, err := net.DialTimeout("tcp", dst, tcpDialTimeout)
+	dialer := net.Dialer{Timeout: tcpDialTimeout}
+	remote, err := dialer.DialContext(s.ctx, "tcp", dst)
 	if err != nil {
 		netstackConn.Close()
 		s.logger.Printf("netstack: tcp: dial %s: %v", dst, err)
@@ -261,6 +269,10 @@ func (s *Stack) handleTCP(req *tcp.ForwarderRequest) {
 // It creates a connected UDP endpoint via gvisor, dials the real destination,
 // and relays datagrams bidirectionally with an idle timeout.
 func (s *Stack) handleUDP(req *udp.ForwarderRequest) {
+	if s.ctx.Err() != nil {
+		return
+	}
+
 	id := req.ID()
 	dst := net.JoinHostPort(
 		id.LocalAddress.String(),
@@ -276,7 +288,8 @@ func (s *Stack) handleUDP(req *udp.ForwarderRequest) {
 
 	netstackConn := gonet.NewUDPConn(s.ns, &wq, ep)
 
-	remote, err := net.DialTimeout("udp", dst, udpDialTimeout)
+	dialer := net.Dialer{Timeout: udpDialTimeout}
+	remote, err := dialer.DialContext(s.ctx, "udp", dst)
 	if err != nil {
 		netstackConn.Close()
 		s.logger.Printf("netstack: udp: dial %s: %v", dst, err)
