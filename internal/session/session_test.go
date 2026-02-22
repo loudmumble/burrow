@@ -176,35 +176,35 @@ func TestGetTunnelsRoutes(t *testing.T) {
 	}
 }
 
-func TestAddTunnelStub(t *testing.T) {
+func TestAddTunnelSessionNotFound(t *testing.T) {
 	m := NewManager()
 	_, err := m.AddTunnel("s1", "local", ":8080", "10.0.0.1:80", "tcp")
 	if err == nil {
-		t.Error("AddTunnel stub should return error")
+		t.Error("AddTunnel with nonexistent session should return error")
 	}
 }
 
-func TestRemoveTunnelStub(t *testing.T) {
+func TestRemoveTunnelSessionNotFound(t *testing.T) {
 	m := NewManager()
 	err := m.RemoveTunnel("s1", "t1")
 	if err == nil {
-		t.Error("RemoveTunnel stub should return error")
+		t.Error("RemoveTunnel with nonexistent session should return error")
 	}
 }
 
-func TestAddRouteStub(t *testing.T) {
+func TestAddRouteSessionNotFound(t *testing.T) {
 	m := NewManager()
 	_, err := m.AddRoute("s1", "10.0.0.0/24")
 	if err == nil {
-		t.Error("AddRoute stub should return error")
+		t.Error("AddRoute with nonexistent session should return error")
 	}
 }
 
-func TestRemoveRouteStub(t *testing.T) {
+func TestRemoveRouteSessionNotFound(t *testing.T) {
 	m := NewManager()
 	err := m.RemoveRoute("s1", "10.0.0.0/24")
 	if err == nil {
-		t.Error("RemoveRoute stub should return error")
+		t.Error("RemoveRoute with nonexistent session should return error")
 	}
 }
 
