@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"sync"
@@ -79,7 +80,7 @@ func (t *WSTransport) Listen(ctx context.Context, addr string, tlsCfg *tls.Confi
 			serveErr = t.httpServer.Serve(ln)
 		}
 		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-			_ = serveErr
+			log.Printf("[ws] server error: %v", serveErr)
 		}
 		close(t.closed)
 	}()
