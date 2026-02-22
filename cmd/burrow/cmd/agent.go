@@ -35,28 +35,28 @@ The agent establishes a multiplexed connection to the server and waits for
 tunnel and route commands. TLS is enabled by default.
 
 Examples:
-  burrow agent --server 10.0.0.1:11601
-  burrow agent --server 10.0.0.1:11601 --fingerprint AB:CD:EF:...
-  burrow agent --server wss://10.0.0.1:443 --transport ws
-  burrow agent --server 10.0.0.1:5353 --transport dns
-  burrow agent --server 10.0.0.1 --transport icmp
-  burrow agent --server 10.0.0.1:11601 --retry 5`,
+  burrow agent --connect 10.0.0.1:11601
+  burrow agent -c 10.0.0.1:11601 --fingerprint AB:CD:EF:...
+  burrow agent --connect wss://10.0.0.1:443 --transport ws
+  burrow agent --connect 10.0.0.1:5353 --transport dns
+  burrow agent --connect 10.0.0.1 --transport icmp
+  burrow agent -c 10.0.0.1:11601 --retry 5`,
 	Run: runAgent,
 }
 
 func init() {
 	rootCmd.AddCommand(agentCmd)
 
-	agentCmd.Flags().StringP("server", "s", "", "Proxy server address (required)")
+	agentCmd.Flags().StringP("connect", "c", "", "Server address to connect to (required)")
 	agentCmd.Flags().String("fingerprint", "", "Expected server TLS fingerprint for verification")
 	agentCmd.Flags().Int("retry", 0, "Max reconnection attempts (0 = infinite)")
 	agentCmd.Flags().StringP("transport", "t", "raw", "Transport protocol (raw, ws, dns, icmp)")
 	agentCmd.Flags().Bool("no-tls", false, "Connect without TLS")
-	agentCmd.MarkFlagRequired("server")
+	agentCmd.MarkFlagRequired("connect")
 }
 
 func runAgent(cmd *cobra.Command, _ []string) {
-	serverAddr, _ := cmd.Flags().GetString("server")
+	serverAddr, _ := cmd.Flags().GetString("connect")
 	fingerprint, _ := cmd.Flags().GetString("fingerprint")
 	maxRetry, _ := cmd.Flags().GetInt("retry")
 	transportName, _ := cmd.Flags().GetString("transport")
