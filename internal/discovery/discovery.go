@@ -53,18 +53,6 @@ type Scanner struct {
 	logger      *log.Logger
 }
 
-// New creates a Scanner. If ports is nil, DefaultPorts are used.
-func New(network string, ports []int) *Scanner {
-	if len(ports) == 0 {
-		ports = DefaultPorts
-	}
-	return &Scanner{
-		ports:       ports,
-		timeout:     2 * time.Second,
-		concurrency: 256,
-		logger:      log.Default(),
-	}
-}
 
 // NewScanner creates a Scanner with explicit configuration.
 func NewScanner(ports []int, timeout time.Duration, concurrency int) *Scanner {
@@ -199,11 +187,6 @@ func (s *Scanner) isPortOpen(ctx context.Context, ip string, port int) bool {
 	return true
 }
 
-// Scan is the legacy API - scans the network prefix as /24.
-func (s *Scanner) Scan() []*Target {
-	// Legacy compatibility: not used by new CLI but kept for old callers
-	return nil
-}
 
 func identifyServices(ports []int) []string {
 	var result []string
