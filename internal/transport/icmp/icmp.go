@@ -15,6 +15,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -270,6 +271,12 @@ type icmpConn struct {
 	writeMu   sync.Mutex
 	done      chan struct{}
 	closeOnce sync.Once
+
+	// Deadline support for net.Conn compliance
+	deadlineMu    sync.Mutex
+	readDeadline  time.Time
+	writeDeadline time.Time
+	readTimer     *time.Timer
 }
 
 func newICMPConn(pc net.PacketConn, remote net.Addr, id int, ownsPC bool) *icmpConn {
@@ -365,6 +372,12 @@ func (c *icmpConn) Read(b []byte) (int, error) {
 		if c.readEOF || c.closed {
 			return 0, io.EOF
 		}
+		c.deadlineMu.Lock()
+		dl := c.readDeadline
+		c.deadlineMu.Unlock()
+		if !dl.IsZero() && !time.Now().Before(dl) {
+			return 0, os.ErrDeadlineExceeded
+		}
 		c.cond.Wait()
 	}
 
@@ -383,6 +396,13 @@ func (c *icmpConn) Write(b []byte) (int, error) {
 	case <-c.done:
 		return 0, io.ErrClosedPipe
 	default:
+	}
+
+	c.deadlineMu.Lock()
+	dl := c.writeDeadline
+	c.deadlineMu.Unlock()
+	if !dl.IsZero() && !time.Now().Before(dl) {
+		return 0, os.ErrDeadlineExceeded
 	}
 
 	total := 0
@@ -464,6 +484,12 @@ func (c *icmpConn) Close() error {
 		c.mu.Unlock()
 		c.cond.Broadcast()
 
+		c.deadlineMu.Lock()
+		if c.readTimer != nil {
+			c.readTimer.Stop()
+		}
+		c.deadlineMu.Unlock()
+
 		close(c.done)
 
 		if c.ownsPC {
@@ -483,14 +509,44 @@ func (c *icmpConn) RemoteAddr() net.Addr {
 	return c.remote
 }
 
-// SetDeadline is a no-op (ICMP connections use internal timeouts).
-func (c *icmpConn) SetDeadline(_ time.Time) error { return nil }
+// SetDeadline sets both read and write deadlines.
+func (c *icmpConn) SetDeadline(t time.Time) error {
+	if err := c.SetReadDeadline(t); err != nil {
+		return err
+	}
+	return c.SetWriteDeadline(t)
+}
 
-// SetReadDeadline is a no-op.
-func (c *icmpConn) SetReadDeadline(_ time.Time) error { return nil }
+// SetReadDeadline sets the read deadline. A zero value disables the deadline.
+// When the deadline expires, blocked Read calls return os.ErrDeadlineExceeded.
+func (c *icmpConn) SetReadDeadline(t time.Time) error {
+	c.deadlineMu.Lock()
+	defer c.deadlineMu.Unlock()
+	c.readDeadline = t
+	if c.readTimer != nil {
+		c.readTimer.Stop()
+		c.readTimer = nil
+	}
+	if !t.IsZero() {
+		d := time.Until(t)
+		if d <= 0 {
+			c.cond.Broadcast()
+		} else {
+			c.readTimer = time.AfterFunc(d, func() {
+				c.cond.Broadcast()
+			})
+		}
+	}
+	return nil
+}
 
-// SetWriteDeadline is a no-op.
-func (c *icmpConn) SetWriteDeadline(_ time.Time) error { return nil }
+// SetWriteDeadline sets the write deadline. A zero value disables the deadline.
+func (c *icmpConn) SetWriteDeadline(t time.Time) error {
+	c.deadlineMu.Lock()
+	defer c.deadlineMu.Unlock()
+	c.writeDeadline = t
+	return nil
+}
 
 // isTimeout returns true if err is a network timeout.
 func isTimeout(err error) bool {

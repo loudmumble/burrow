@@ -17,7 +17,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -176,7 +178,9 @@ func (t *DNSTransport) Listen(_ context.Context, addr string, _ *tls.Config) err
 	}
 
 	go func() {
-		_ = t.server.ActivateAndServe()
+		if err := t.server.ActivateAndServe(); err != nil {
+			log.Printf("[dns] server error: %v", err)
+		}
 	}()
 
 	<-started
@@ -284,7 +288,9 @@ func (t *DNSTransport) handleDNS(w mdns.ResponseWriter, r *mdns.Msg) {
 		Txt: splitTXT(txtVal),
 	})
 
-	_ = w.WriteMsg(msg)
+	if err := w.WriteMsg(msg); err != nil {
+		log.Printf("[dns] write response for session %s: %v", sessionID, err)
+	}
 }
 
 // Accept returns the next inbound connection from a DNS tunnel client. Blocks.
@@ -352,6 +358,12 @@ type dnsConn struct {
 	sendMu     sync.Mutex // serializes all DNS queries to preserve ordering
 	seq        uint32
 	pollDone   chan struct{}
+
+	// Deadline support for net.Conn compliance
+	deadlineMu    sync.Mutex
+	readDeadline  time.Time
+	writeDeadline time.Time
+	readTimer     *time.Timer
 }
 
 // newClientConn creates a client-side dnsConn that tunnels data via DNS queries.
@@ -425,7 +437,26 @@ func (c *dnsConn) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	default:
 	}
-	return c.readBuf.Read(p)
+
+	sb := c.readBuf
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+
+	for len(sb.buf) == 0 {
+		if sb.closed {
+			return 0, io.EOF
+		}
+		c.deadlineMu.Lock()
+		dl := c.readDeadline
+		c.deadlineMu.Unlock()
+		if !dl.IsZero() && !time.Now().Before(dl) {
+			return 0, os.ErrDeadlineExceeded
+		}
+		sb.cond.Wait()
+	}
+	n := copy(p, sb.buf)
+	sb.buf = sb.buf[n:]
+	return n, nil
 }
 
 // Write writes data to the DNS tunnel. On the client side, data is sent
@@ -436,6 +467,13 @@ func (c *dnsConn) Write(p []byte) (int, error) {
 	case <-c.closed:
 		return 0, io.ErrClosedPipe
 	default:
+	}
+
+	c.deadlineMu.Lock()
+	dl := c.writeDeadline
+	c.deadlineMu.Unlock()
+	if !dl.IsZero() && !time.Now().Before(dl) {
+		return 0, os.ErrDeadlineExceeded
 	}
 
 	if !c.isClient {
@@ -475,6 +513,11 @@ func (c *dnsConn) Close() error {
 	c.closeOnce.Do(func() {
 		close(c.closed)
 		c.readBuf.Close()
+		c.deadlineMu.Lock()
+		if c.readTimer != nil {
+			c.readTimer.Stop()
+		}
+		c.deadlineMu.Unlock()
 		if c.isClient && c.pollDone != nil {
 			<-c.pollDone
 		}
@@ -484,9 +527,40 @@ func (c *dnsConn) Close() error {
 
 func (c *dnsConn) LocalAddr() net.Addr              { return c.localAddr }
 func (c *dnsConn) RemoteAddr() net.Addr             { return c.remoteAddr }
-func (c *dnsConn) SetDeadline(time.Time) error      { return nil }
-func (c *dnsConn) SetReadDeadline(time.Time) error  { return nil }
-func (c *dnsConn) SetWriteDeadline(time.Time) error { return nil }
+func (c *dnsConn) SetDeadline(t time.Time) error {
+	if err := c.SetReadDeadline(t); err != nil {
+		return err
+	}
+	return c.SetWriteDeadline(t)
+}
+
+func (c *dnsConn) SetReadDeadline(t time.Time) error {
+	c.deadlineMu.Lock()
+	defer c.deadlineMu.Unlock()
+	c.readDeadline = t
+	if c.readTimer != nil {
+		c.readTimer.Stop()
+		c.readTimer = nil
+	}
+	if !t.IsZero() {
+		d := time.Until(t)
+		if d <= 0 {
+			c.readBuf.cond.Broadcast()
+		} else {
+			c.readTimer = time.AfterFunc(d, func() {
+				c.readBuf.cond.Broadcast()
+			})
+		}
+	}
+	return nil
+}
+
+func (c *dnsConn) SetWriteDeadline(t time.Time) error {
+	c.deadlineMu.Lock()
+	defer c.deadlineMu.Unlock()
+	c.writeDeadline = t
+	return nil
+}
 
 // ---------------------------------------------------------------------------
 // dnsAddr: net.Addr for DNS tunnel connections
@@ -571,7 +645,9 @@ func replyNXDomain(w mdns.ResponseWriter, r *mdns.Msg) {
 	msg := new(mdns.Msg)
 	msg.SetReply(r)
 	msg.Rcode = mdns.RcodeNameError
-	_ = w.WriteMsg(msg)
+	if err := w.WriteMsg(msg); err != nil {
+		log.Printf("[dns] write NXDOMAIN response: %v", err)
+	}
 }
 
 // randomHex generates n random hex characters.
