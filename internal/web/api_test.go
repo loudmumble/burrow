@@ -125,17 +125,36 @@ func (m *mockProvider) RemoveRoute(sessionID, cidr string) error {
 	return fmt.Errorf("route %s not found", cidr)
 }
 
+type authTransport struct {
+	http.RoundTripper
+}
+
+func (t *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req.Header.Set("Authorization", "Bearer test-token")
+	if t.RoundTripper == nil {
+		return http.DefaultTransport.RoundTrip(req)
+	}
+	return t.RoundTripper.RoundTrip(req)
+}
+
 // newTestServer creates an httptest.Server with full API wired up.
 func newTestServer(provider SessionProvider, events *EventBus) *httptest.Server {
 	mux := http.NewServeMux()
-	registerAPIRoutes(mux, provider)
-	mux.Handle("GET /api/events", events)
+	registerAPIRoutes(mux, provider, "test-token")
+
+	h := &apiHandler{apiToken: "test-token"}
+	mux.Handle("GET /api/events", h.AuthMiddleware(events))
 
 	// static files
 	staticHandler := http.FileServer(http.FS(StaticFS))
 	mux.Handle("/static/", staticHandler)
 
-	return httptest.NewServer(mux)
+	ts := httptest.NewServer(mux)
+
+	// Set the default client to always inject the authorization header
+	http.DefaultClient.Transport = &authTransport{http.DefaultTransport}
+
+	return ts
 }
 
 func TestListSessions(t *testing.T) {

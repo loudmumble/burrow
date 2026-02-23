@@ -52,7 +52,8 @@ func init() {
 	serverCmd.Flags().String("key", "", "Path to TLS private key PEM file")
 	serverCmd.Flags().Bool("mcp-api", false, "Enable agent REST API for MCP server integration")
 	serverCmd.Flags().String("api-token", "", "Token for API authentication (auto-generated if empty)")
-	serverCmd.Flags().String("webui", "127.0.0.1:9090", "Enable WebUI dashboard (default: 127.0.0.1:9090)")
+	serverCmd.Flags().String("webui", "", "Enable WebUI dashboard (default: 127.0.0.1:9090)")
+	serverCmd.Flags().Lookup("webui").NoOptDefVal = "127.0.0.1:9090"
 	serverCmd.Flags().Bool("no-tls", false, "Disable TLS (use plain TCP)")
 	serverCmd.Flags().StringP("transport", "t", "raw", "Transport protocol (raw, ws, dns, icmp)")
 }
@@ -133,7 +134,7 @@ func runServer(cmd *cobra.Command, _ []string) {
 		}
 	}()
 
-	if enableAPI {
+	if enableAPI || webuiEnabled {
 		if apiToken == "" {
 			b := make([]byte, 16)
 			if _, err := rand.Read(b); err != nil {
@@ -143,53 +144,37 @@ func runServer(cmd *cobra.Command, _ []string) {
 			apiToken = hex.EncodeToString(b)
 		}
 
-		apiAddr := "127.0.0.1:9091"
+		addr := "127.0.0.1:9091"
 		if webuiEnabled {
-			apiAddr = webuiAddr
+			addr = webuiAddr
+		}
+
+		scheme := "http"
+		if tlsCfg != nil {
+			scheme = "https"
 		}
 
 		fmt.Printf("\n[!] ========================================\n")
-		fmt.Printf("[!] MCP API ENABLED\n")
-		fmt.Printf("[!] Endpoint: http://%s\n", apiAddr)
+		if webuiEnabled {
+			fmt.Printf("[!] WebUI & API ENABLED\n")
+			fmt.Printf("[!] URL: %s://%s/?token=%s\n", scheme, addr, apiToken)
+		} else {
+			fmt.Printf("[!] MCP API ENABLED\n")
+			fmt.Printf("[!] Endpoint: %s://%s/api\n", scheme, addr)
+		}
 		fmt.Printf("[!] API Token: %s\n", apiToken)
 		fmt.Printf("[!] Keep this token secret. It is required to interact with the API.\n")
 		fmt.Printf("[!] ========================================\n\n")
 
 		events := web.NewEventBus()
-		webSrv := web.NewServer(apiAddr, mgr, events, apiToken)
+		// Always enable API if this block is reached. The web server handles serving static files conditionally based on webuiEnabled.
+		webSrv := web.NewServer(addr, mgr, events, apiToken, true, tlsCfg, webuiEnabled)
 		go func() {
 			if err := webSrv.Start(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "[!] MCP API error: %v\n", err)
+				fmt.Fprintf(os.Stderr, "[!] Web server error: %v\n", err)
 			}
 		}()
 		defer webSrv.Stop()
-	}
-
-	if webuiEnabled {
-		if !enableAPI {
-			if apiToken == "" {
-				b := make([]byte, 16)
-				if _, err := rand.Read(b); err != nil {
-					fmt.Fprintf(os.Stderr, "[!] Failed to generate API token: %v\n", err)
-					os.Exit(1)
-				}
-				apiToken = hex.EncodeToString(b)
-			}
-			fmt.Printf("\n[!] ========================================\n")
-			fmt.Printf("[!] WebUI ENABLED\n")
-			fmt.Printf("[!] Endpoint: http://%s\n", webuiAddr)
-			fmt.Printf("[!] API Token: %s\n", apiToken)
-			fmt.Printf("[!] ========================================\n\n")
-
-			events := web.NewEventBus()
-			webSrv := web.NewServer(webuiAddr, mgr, events, apiToken)
-			go func() {
-				if err := webSrv.Start(ctx); err != nil {
-					fmt.Fprintf(os.Stderr, "[!] WebUI error: %v\n", err)
-				}
-			}()
-			defer webSrv.Stop()
-		}
 	}
 
 	sigChan := make(chan os.Signal, 1)

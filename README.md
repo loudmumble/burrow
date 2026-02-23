@@ -62,9 +62,9 @@ On startup, the server generates a self-signed Ed25519 TLS certificate and print
 | `--key` | | Path to TLS private key PEM file |
 | `--no-tls` | | Disable TLS (plaintext connections) |
 | `--transport, -t` | `raw` | Transport protocol: `raw`, `ws`, `dns`, `icmp` |
-| `--mcp-api` | | Enable WebUI dashboard and REST API |
+| `--mcp-api` | | Enable agent REST API for MCP server integration |
 | `--api-token` | | Token for API authentication (auto-generated if empty) |
-| `--webui` | `127.0.0.1:9090` | WebUI listen address (ip:port) |
+| `--webui` | `127.0.0.1:9090` | Enable WebUI dashboard and optionally set listen address |
 
 **Examples:**
 
@@ -643,7 +643,7 @@ proxychains nmap -sT -p 22,80,443 10.0.0.0/24
 
 ## WebUI Dashboard
 
-Enabled with `--mcp-api` on the server. Accessible at `http://127.0.0.1:9090` by default (or the address set with `--webui`).
+Enabled with `--webui` on the server. Accessible at `http://127.0.0.1:9090` by default (or the address set with `--webui`).
 
 Built with Alpine.js and Pico CSS. Provides a live session list, tunnel management, and route management. The `GET /api/events` endpoint is a Server-Sent Events stream for live updates.
 

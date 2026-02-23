@@ -72,26 +72,32 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 // AuthMiddleware wraps an http.Handler to enforce bearer token authentication.
 func (h *apiHandler) AuthMiddleware(next http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// If no API token is configured, we could reject all or accept all.
-		// Since --mcp-api is explicit, we require the token.
 		if h.apiToken == "" {
 			writeError(w, http.StatusUnauthorized, "API token not configured")
 			return
 		}
 
 		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			writeError(w, http.StatusUnauthorized, "missing authorization header")
+		token := ""
+
+		if authHeader != "" {
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) == 2 && strings.ToLower(parts[0]) == "bearer" {
+				token = parts[1]
+			}
+		}
+
+		// Fallback to query param for EventSource (SSE) which cannot send headers
+		if token == "" {
+			token = r.URL.Query().Get("token")
+		}
+
+		if token == "" {
+			writeError(w, http.StatusUnauthorized, "missing authorization header or token")
 			return
 		}
 
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-			writeError(w, http.StatusUnauthorized, "invalid authorization header format")
-			return
-		}
-
-		if parts[1] != h.apiToken {
+		if token != h.apiToken {
 			writeError(w, http.StatusUnauthorized, "invalid API token")
 			return
 		}
