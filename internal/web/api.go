@@ -73,7 +73,7 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 func (h *apiHandler) AuthMiddleware(next http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// If no API token is configured, we could reject all or accept all.
-		// Since --agent-api is explicit, we require the token.
+		// Since --mcp-api is explicit, we require the token.
 		if h.apiToken == "" {
 			writeError(w, http.StatusUnauthorized, "API token not configured")
 			return

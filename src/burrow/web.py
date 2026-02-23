@@ -15,7 +15,7 @@ def create_app(config=None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    GO_API_URL = os.getenv("BURROW_API_URL", "http://127.0.0.1:8080")
+    GO_API_URL = os.getenv("BURROW_API_URL", "http://127.0.0.1:9090")
     GO_API_TOKEN = os.getenv("BURROW_API_TOKEN", "")
 
     @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])

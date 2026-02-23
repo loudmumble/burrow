@@ -30,9 +30,9 @@ var sessionListCmd = &cobra.Command{
 
 Example:
   burrow session list
-  burrow session list --webui-addr 127.0.0.1:8080`,
+  burrow session list --webui 127.0.0.1:9090`,
 	Run: func(cmd *cobra.Command, _ []string) {
-		webuiAddr, _ := cmd.Flags().GetString("webui-addr")
+		webuiAddr, _ := cmd.Flags().GetString("webui")
 		apiURL := fmt.Sprintf("http://%s/api/sessions", webuiAddr)
 
 		resp, err := http.Get(apiURL)
@@ -82,7 +82,7 @@ Example:
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		sessionID := args[0]
-		webuiAddr, _ := cmd.Flags().GetString("webui-addr")
+		webuiAddr, _ := cmd.Flags().GetString("webui")
 		baseURL := fmt.Sprintf("http://%s", webuiAddr)
 
 		resp, err := http.Get(baseURL + "/api/sessions/" + sessionID)
@@ -144,7 +144,7 @@ Example:
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		sessionID := args[0]
-		webuiAddr, _ := cmd.Flags().GetString("webui-addr")
+		webuiAddr, _ := cmd.Flags().GetString("webui")
 		baseURL := fmt.Sprintf("http://%s", webuiAddr)
 
 		resp, err := http.Get(baseURL + "/api/sessions/" + sessionID)
@@ -206,9 +206,9 @@ func init() {
 	sessionCmd.AddCommand(sessionInfoCmd)
 	sessionCmd.AddCommand(sessionUseCmd)
 
-	sessionListCmd.Flags().String("webui-addr", "127.0.0.1:8080", "WebUI server address")
-	sessionInfoCmd.Flags().String("webui-addr", "127.0.0.1:8080", "WebUI server address")
-	sessionUseCmd.Flags().String("webui-addr", "127.0.0.1:8080", "WebUI server address")
+	sessionListCmd.Flags().String("webui", "127.0.0.1:9090", "WebUI server address")
+	sessionInfoCmd.Flags().String("webui", "127.0.0.1:9090", "WebUI server address")
+	sessionUseCmd.Flags().String("webui", "127.0.0.1:9090", "WebUI server address")
 }
 
 func printSessionTunnels(baseURL, sessionID string) {

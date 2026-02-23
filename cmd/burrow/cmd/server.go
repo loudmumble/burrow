@@ -37,7 +37,7 @@ Examples:
   burrow server
   burrow server --listen 0.0.0.0:11601
   burrow server --cert server.pem --key server-key.pem
-  burrow server --agent-api --webui-addr 127.0.0.1:8080
+  burrow server --mcp-api --webui 127.0.0.1:9090
   burrow server --transport ws --listen 0.0.0.0:443
   burrow server --transport dns --listen 0.0.0.0:5353`,
 	Run: runServer,
@@ -49,9 +49,9 @@ func init() {
 	serverCmd.Flags().StringP("listen", "l", "0.0.0.0:11601", "Listen address for agent connections")
 	serverCmd.Flags().String("cert", "", "Path to TLS certificate PEM file")
 	serverCmd.Flags().String("key", "", "Path to TLS private key PEM file")
-	serverCmd.Flags().Bool("agent-api", false, "Enable the agent REST API and WebUI dashboard")
+	serverCmd.Flags().Bool("mcp-api", false, "Enable the agent REST API and WebUI dashboard")
 	serverCmd.Flags().String("api-token", "", "Token for API authentication (auto-generated if empty)")
-	serverCmd.Flags().String("webui-addr", "127.0.0.1:8080", "WebUI / API listen address")
+	serverCmd.Flags().String("webui", "127.0.0.1:9090", "WebUI / API listen address (ip:port)")
 	serverCmd.Flags().Bool("no-tls", false, "Disable TLS (use plain TCP)")
 	serverCmd.Flags().StringP("transport", "t", "raw", "Transport protocol (raw, ws, dns, icmp)")
 }
@@ -60,9 +60,9 @@ func runServer(cmd *cobra.Command, _ []string) {
 	listen, _ := cmd.Flags().GetString("listen")
 	certPath, _ := cmd.Flags().GetString("cert")
 	keyPath, _ := cmd.Flags().GetString("key")
-	enableAPI, _ := cmd.Flags().GetBool("agent-api")
+	enableAPI, _ := cmd.Flags().GetBool("mcp-api")
 	apiToken, _ := cmd.Flags().GetString("api-token")
-	webuiAddr, _ := cmd.Flags().GetString("webui-addr")
+	webuiAddr, _ := cmd.Flags().GetString("webui")
 	noTLS, _ := cmd.Flags().GetBool("no-tls")
 	transportName, _ := cmd.Flags().GetString("transport")
 

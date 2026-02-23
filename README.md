@@ -62,9 +62,9 @@ On startup, the server generates a self-signed Ed25519 TLS certificate and print
 | `--key` | | Path to TLS private key PEM file |
 | `--no-tls` | | Disable TLS (plaintext connections) |
 | `--transport, -t` | `raw` | Transport protocol: `raw`, `ws`, `dns`, `icmp` |
-| `--agent-api` | | Enable WebUI dashboard and REST API |
+| `--mcp-api` | | Enable WebUI dashboard and REST API |
 | `--api-token` | | Token for API authentication (auto-generated if empty) |
-| `--webui-addr` | `127.0.0.1:8080` | WebUI listen address |
+| `--webui` | `127.0.0.1:9090` | WebUI listen address (ip:port) |
 
 **Examples:**
 
@@ -76,7 +76,7 @@ burrow server
 burrow server --listen 0.0.0.0:443
 
 # WebSocket transport with WebUI
-burrow server --transport ws --listen 0.0.0.0:443 --agent-api
+burrow server --transport ws --listen 0.0.0.0:443 --mcp-api
 
 # DNS tunnel
 burrow server --transport dns --listen 0.0.0.0:53
@@ -88,7 +88,7 @@ burrow server --transport icmp --listen 0.0.0.0:0
 burrow server --cert /path/to/cert.pem --key /path/to/key.pem
 
 # WebUI on custom address
-burrow server --agent-api --webui-addr 0.0.0.0:9090
+burrow server --mcp-api --webui 0.0.0.0:9090
 ```
 
 **Expected output:**
@@ -155,19 +155,19 @@ On disconnect, the agent sleeps and retries. With `--retry 0`, it retries indefi
 
 ### `burrow session list`
 
-List all active agent sessions. Queries the WebUI REST API at `/api/sessions`. The server must be running with `--agent-api`.
+List all active agent sessions. Queries the WebUI REST API at `/api/sessions`. The server must be running with `--mcp-api`.
 
 **Flags:**
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--webui-addr` | `127.0.0.1:8080` | WebUI server address |
+| `--webui` | `127.0.0.1:9090` | WebUI server address |
 
 **Example:**
 
 ```bash
 burrow session list
-burrow session list --webui-addr 127.0.0.1:9090
+burrow session list --webui 127.0.0.1:9090
 ```
 
 **Expected output:**
@@ -188,7 +188,7 @@ Show detailed information about a specific session, including active tunnels and
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--webui-addr` | `127.0.0.1:8080` | WebUI server address |
+| `--webui` | `127.0.0.1:9090` | WebUI server address |
 
 **Example:**
 
@@ -227,7 +227,7 @@ Enter an interactive REPL for managing a specific session. The prompt is `burrow
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--webui-addr` | `127.0.0.1:8080` | WebUI server address |
+| `--webui` | `127.0.0.1:9090` | WebUI server address |
 
 **Example:**
 
@@ -575,14 +575,14 @@ burrow relay udp-listen:5353 udp-connect:8.8.8.8:53
 
 ```bash
 # Operator: start server with WebUI and API Authentication
-burrow server --agent-api
+burrow server --mcp-api
 # Note the fingerprint and API Token printed on startup
 
 # Target machine: run agent
 burrow agent --connect OPERATOR_IP:11601 --fingerprint SHA256:a3f2c1...
 
 # Operator: list sessions
-burrow session list --webui-addr 127.0.0.1:8080
+burrow session list --webui 127.0.0.1:9090
 
 # Operator: manage a session interactively
 burrow session use SESSION_ID
@@ -612,7 +612,7 @@ burrow pivot --target final.host --port 443 --hop hop1:22 --hop hop2:443 --local
 
 ```bash
 # Operator: listen on 443 with WebSocket transport
-burrow server --transport ws --listen 0.0.0.0:443 --agent-api
+burrow server --transport ws --listen 0.0.0.0:443 --mcp-api
 
 # Target: connect back using WebSocket
 burrow agent --connect operator.com:443 --transport ws --fingerprint SHA256:a3f2c1...
@@ -643,7 +643,7 @@ proxychains nmap -sT -p 22,80,443 10.0.0.0/24
 
 ## WebUI Dashboard
 
-Enabled with `--agent-api` on the server. Accessible at `http://127.0.0.1:8080` by default (or the address set with `--webui-addr`).
+Enabled with `--mcp-api` on the server. Accessible at `http://127.0.0.1:9090` by default (or the address set with `--webui`).
 
 Built with Alpine.js and Pico CSS. Provides a live session list, tunnel management, and route management. The `GET /api/events` endpoint is a Server-Sent Events stream for live updates.
 
