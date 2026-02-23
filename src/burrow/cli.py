@@ -6,10 +6,41 @@ import click
 
 from burrow import __version__
 
-# Look for 'burrow' in PATH, or locally compiled binary
-GO_BIN = "burrow"
-if os.path.isfile("./burrow") and os.access("./burrow", os.X_OK):
-    GO_BIN = "./burrow"
+def get_go_bin() -> str:
+    import platform
+    import shutil
+    
+    if os.path.isfile("./burrow") and os.access("./burrow", os.X_OK):
+        return "./burrow"
+        
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    
+    arch = "amd64"
+    if machine in ["aarch64", "arm64"]:
+        arch = "arm64"
+        
+    ext = ".exe" if system == "windows" else ""
+    cross_bin = f"burrow-{system}-{arch}{ext}"
+    
+    search_paths = [
+        os.path.join(".", "build", "burrow"),
+        os.path.join(".", "build", cross_bin),
+        os.path.join(project_root, "build", "burrow"),
+        os.path.join(project_root, "build", cross_bin)
+    ]
+    
+    for path in search_paths:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+            
+    if shutil.which("burrow"):
+        return "burrow"
+        
+    return "burrow"
+
+GO_BIN = get_go_bin()
 
 @click.group(context_settings={"ignore_unknown_options": True}, invoke_without_command=True)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
