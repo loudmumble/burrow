@@ -45,6 +45,15 @@ func (s *Server) Start(ctx context.Context) error {
 	h := &apiHandler{apiToken: s.APIToken}
 	mux.HandleFunc("GET /api/events", h.AuthMiddleware(s.Events))
 
+	// Root handler - redirect to static index.html
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			http.Redirect(w, r, "/static/index.html", http.StatusFound)
+			return
+		}
+		http.NotFound(w, r)
+	})
+
 	// Embedded static files served under /static/
 	staticSub, err := fs.Sub(StaticFS, "static")
 	if err != nil {
@@ -52,15 +61,6 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	fileServer := http.FileServer(http.FS(staticSub))
 	mux.Handle("/static/", http.StripPrefix("/static/", fileServer))
-
-	// Root redirects to index.html
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" {
-			http.Redirect(w, r, "/static/index.html", http.StatusFound)
-			return
-		}
-		http.NotFound(w, r)
-	})
 
 	ln, err := net.Listen("tcp", s.ListenAddr)
 	if err != nil {
