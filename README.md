@@ -62,7 +62,8 @@ On startup, the server generates a self-signed Ed25519 TLS certificate and print
 | `--key` | | Path to TLS private key PEM file |
 | `--no-tls` | | Disable TLS (plaintext connections) |
 | `--transport, -t` | `raw` | Transport protocol: `raw`, `ws`, `dns`, `icmp` |
-| `--webui` | | Enable WebUI dashboard |
+| `--agent-api` | | Enable WebUI dashboard and REST API |
+| `--api-token` | | Token for API authentication (auto-generated if empty) |
 | `--webui-addr` | `127.0.0.1:8080` | WebUI listen address |
 
 **Examples:**
@@ -75,7 +76,7 @@ burrow server
 burrow server --listen 0.0.0.0:443
 
 # WebSocket transport with WebUI
-burrow server --transport ws --listen 0.0.0.0:443 --webui
+burrow server --transport ws --listen 0.0.0.0:443 --agent-api
 
 # DNS tunnel
 burrow server --transport dns --listen 0.0.0.0:53
@@ -87,7 +88,7 @@ burrow server --transport icmp --listen 0.0.0.0:0
 burrow server --cert /path/to/cert.pem --key /path/to/key.pem
 
 # WebUI on custom address
-burrow server --webui --webui-addr 0.0.0.0:9090
+burrow server --agent-api --webui-addr 0.0.0.0:9090
 ```
 
 **Expected output:**
@@ -154,7 +155,7 @@ On disconnect, the agent sleeps and retries. With `--retry 0`, it retries indefi
 
 ### `burrow session list`
 
-List all active agent sessions. Queries the WebUI REST API at `/api/sessions`. The server must be running with `--webui`.
+List all active agent sessions. Queries the WebUI REST API at `/api/sessions`. The server must be running with `--agent-api`.
 
 **Flags:**
 
@@ -573,9 +574,9 @@ burrow relay udp-listen:5353 udp-connect:8.8.8.8:53
 ### Agent-Based Tunneling
 
 ```bash
-# Operator: start server with WebUI
-burrow server --webui
-# Note the fingerprint printed on startup
+# Operator: start server with WebUI and API Authentication
+burrow server --agent-api
+# Note the fingerprint and API Token printed on startup
 
 # Target machine: run agent
 burrow agent --connect OPERATOR_IP:11601 --fingerprint SHA256:a3f2c1...
@@ -611,7 +612,7 @@ burrow pivot --target final.host --port 443 --hop hop1:22 --hop hop2:443 --local
 
 ```bash
 # Operator: listen on 443 with WebSocket transport
-burrow server --transport ws --listen 0.0.0.0:443 --webui
+burrow server --transport ws --listen 0.0.0.0:443 --agent-api
 
 # Target: connect back using WebSocket
 burrow agent --connect operator.com:443 --transport ws --fingerprint SHA256:a3f2c1...
@@ -642,11 +643,15 @@ proxychains nmap -sT -p 22,80,443 10.0.0.0/24
 
 ## WebUI Dashboard
 
-Enabled with `--webui` on the server. Accessible at `http://127.0.0.1:8080` by default (or the address set with `--webui-addr`).
+Enabled with `--agent-api` on the server. Accessible at `http://127.0.0.1:8080` by default (or the address set with `--webui-addr`).
 
 Built with Alpine.js and Pico CSS. Provides a live session list, tunnel management, and route management. The `GET /api/events` endpoint is a Server-Sent Events stream for live updates.
 
 ### REST API
+
+**Authentication:** 
+The REST API enforces HTTP Bearer token authentication. Requests must include the automatically generated token (or the token explicitly passed via `--api-token`) in the headers:
+`Authorization: Bearer <token>`
 
 All endpoints return JSON.
 
@@ -681,19 +686,21 @@ All endpoints return JSON.
 }
 ```
 
-**Example curl usage:**
+**Example curl usage (Replace <token> with generated API key):**
 
 ```bash
 # List sessions
-curl http://127.0.0.1:8080/api/sessions
+curl -H "Authorization: Bearer <token>" http://127.0.0.1:8080/api/sessions
 
 # Create a tunnel
 curl -X POST http://127.0.0.1:8080/api/sessions/session-abc123/tunnels \
+  -H "Authorization: Bearer <token>" \
   -H 'Content-Type: application/json' \
   -d '{"direction":"local","listen":"127.0.0.1:8080","remote":"10.0.0.5:80","protocol":"tcp"}'
 
 # Add a route
 curl -X POST http://127.0.0.1:8080/api/sessions/session-abc123/routes \
+  -H "Authorization: Bearer <token>" \
   -H 'Content-Type: application/json' \
   -d '{"cidr":"10.0.0.0/24"}'
 
@@ -720,7 +727,7 @@ curl http://127.0.0.1:8080/api/events
 
 ## Python Companion
 
-The Python package provides a CLI, MCP server integration, and a FastAPI web dashboard that complements the Go WebUI.
+The Python package provides an MCP server integration and a FastAPI web dashboard that securely proxies instructions to the compiled Go binary. 
 
 ```bash
 # Install from project root
@@ -728,9 +735,9 @@ pip install -e .
 ```
 
 This installs:
-- `burrow` CLI command (via click)
+- `burrow` CLI command (Python execution wrapper around the Go binary)
 - `burrow.mcp_server` module for MCP integration
-- `burrow.web` FastAPI dashboard (complementary to Go WebUI)
+- `burrow.web` FastAPI proxy (Set `BURROW_API_TOKEN` and `BURROW_API_URL` to route correctly to the Go dashboard)
 
 Dependencies: click, rich, pyyaml, pydantic, cryptography, fastapi, uvicorn.
 

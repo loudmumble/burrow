@@ -1,6 +1,6 @@
 .PHONY: build build-all test clean tidy
 
-GO        := $(HOME)/go1.24/go/bin/go
+GO        ?= go
 MODULE    := github.com/loudmumble/burrow/cmd/burrow/cmd
 BINARY    := burrow
 BUILD_DIR := build

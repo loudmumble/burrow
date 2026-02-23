@@ -64,11 +64,12 @@ burrow tunnel local         burrow agent
 ## WebUI Architecture
 
 ```
-Browser --> GET /static/* --> embedded Alpine.js + Pico CSS SPA
-        --> GET /api/sessions --> JSON session list
-        --> GET /api/sessions/{id}/tunnels --> JSON tunnel list
-        --> POST /api/sessions/{id}/tunnels --> create tunnel
-        --> GET /api/events --> SSE stream (live session/tunnel updates)
+Browser/HTTP Client --> GET /static/* --> embedded Alpine.js + Pico CSS SPA
+             (Auth: Bearer Token required for below APIs)
+         --> GET /api/sessions --> JSON session list
+         --> GET /api/sessions/{id}/tunnels --> JSON tunnel list
+         --> POST /api/sessions/{id}/tunnels --> create tunnel
+         --> GET /api/events --> SSE stream (live session/tunnel updates)
 ```
 
 ## Security Model

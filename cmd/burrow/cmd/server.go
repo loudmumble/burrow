@@ -37,7 +37,7 @@ Examples:
   burrow server
   burrow server --listen 0.0.0.0:11601
   burrow server --cert server.pem --key server-key.pem
-  burrow server --webui --webui-addr 127.0.0.1:8080
+  burrow server --agent-api --webui-addr 127.0.0.1:8080
   burrow server --transport ws --listen 0.0.0.0:443
   burrow server --transport dns --listen 0.0.0.0:5353`,
 	Run: runServer,
@@ -49,8 +49,9 @@ func init() {
 	serverCmd.Flags().StringP("listen", "l", "0.0.0.0:11601", "Listen address for agent connections")
 	serverCmd.Flags().String("cert", "", "Path to TLS certificate PEM file")
 	serverCmd.Flags().String("key", "", "Path to TLS private key PEM file")
-	serverCmd.Flags().Bool("webui", false, "Enable WebUI dashboard")
-	serverCmd.Flags().String("webui-addr", "127.0.0.1:8080", "WebUI listen address")
+	serverCmd.Flags().Bool("agent-api", false, "Enable the agent REST API and WebUI dashboard")
+	serverCmd.Flags().String("api-token", "", "Token for API authentication (auto-generated if empty)")
+	serverCmd.Flags().String("webui-addr", "127.0.0.1:8080", "WebUI / API listen address")
 	serverCmd.Flags().Bool("no-tls", false, "Disable TLS (use plain TCP)")
 	serverCmd.Flags().StringP("transport", "t", "raw", "Transport protocol (raw, ws, dns, icmp)")
 }
@@ -59,7 +60,8 @@ func runServer(cmd *cobra.Command, _ []string) {
 	listen, _ := cmd.Flags().GetString("listen")
 	certPath, _ := cmd.Flags().GetString("cert")
 	keyPath, _ := cmd.Flags().GetString("key")
-	enableWebUI, _ := cmd.Flags().GetBool("webui")
+	enableAPI, _ := cmd.Flags().GetBool("agent-api")
+	apiToken, _ := cmd.Flags().GetString("api-token")
 	webuiAddr, _ := cmd.Flags().GetString("webui-addr")
 	noTLS, _ := cmd.Flags().GetBool("no-tls")
 	transportName, _ := cmd.Flags().GetString("transport")
@@ -128,16 +130,31 @@ func runServer(cmd *cobra.Command, _ []string) {
 		}
 	}()
 
-	if enableWebUI {
+	if enableAPI {
+		if apiToken == "" {
+			b := make([]byte, 16)
+			if _, err := rand.Read(b); err != nil {
+				fmt.Fprintf(os.Stderr, "[!] Failed to generate API token: %v\n", err)
+				os.Exit(1)
+			}
+			apiToken = hex.EncodeToString(b)
+		}
+		
+		fmt.Printf("\n[!] ========================================\n")
+		fmt.Printf("[!] AGENT API ENABLED\n")
+		fmt.Printf("[!] Endpoint: http://%s\n", webuiAddr)
+		fmt.Printf("[!] API Token: %s\n", apiToken)
+		fmt.Printf("[!] Keep this token secret. It is required to interact with the API.\n")
+		fmt.Printf("[!] ========================================\n\n")
+
 		events := web.NewEventBus()
-		webSrv := web.NewServer(webuiAddr, mgr, events)
+		webSrv := web.NewServer(webuiAddr, mgr, events, apiToken)
 		go func() {
 			if err := webSrv.Start(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "[!] WebUI error: %v\n", err)
+				fmt.Fprintf(os.Stderr, "[!] WebUI/API error: %v\n", err)
 			}
 		}()
 		defer webSrv.Stop()
-		fmt.Printf("[*] WebUI at http://%s\n", webuiAddr)
 	}
 
 	sigChan := make(chan os.Signal, 1)

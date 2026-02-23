@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 // SessionInfo describes an agent session for the dashboard.
@@ -53,6 +54,7 @@ type SessionProvider interface {
 // apiHandler holds references needed by all REST handlers.
 type apiHandler struct {
 	provider SessionProvider
+	apiToken string
 }
 
 // writeJSON marshals v as JSON and writes it with the correct content type.
@@ -67,18 +69,49 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-// registerAPIRoutes wires all REST endpoints into the given mux.
-func registerAPIRoutes(mux *http.ServeMux, provider SessionProvider) {
-	h := &apiHandler{provider: provider}
+// AuthMiddleware wraps an http.Handler to enforce bearer token authentication.
+func (h *apiHandler) AuthMiddleware(next http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// If no API token is configured, we could reject all or accept all.
+		// Since --agent-api is explicit, we require the token.
+		if h.apiToken == "" {
+			writeError(w, http.StatusUnauthorized, "API token not configured")
+			return
+		}
 
-	mux.HandleFunc("GET /api/sessions", h.listSessions)
-	mux.HandleFunc("GET /api/sessions/{id}", h.getSession)
-	mux.HandleFunc("GET /api/sessions/{id}/tunnels", h.getTunnels)
-	mux.HandleFunc("POST /api/sessions/{id}/tunnels", h.addTunnel)
-	mux.HandleFunc("DELETE /api/sessions/{id}/tunnels/{tid}", h.removeTunnel)
-	mux.HandleFunc("GET /api/sessions/{id}/routes", h.getRoutes)
-	mux.HandleFunc("POST /api/sessions/{id}/routes", h.addRoute)
-	mux.HandleFunc("DELETE /api/sessions/{id}/routes/{cidr}", h.removeRoute)
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			writeError(w, http.StatusUnauthorized, "missing authorization header")
+			return
+		}
+
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+			writeError(w, http.StatusUnauthorized, "invalid authorization header format")
+			return
+		}
+
+		if parts[1] != h.apiToken {
+			writeError(w, http.StatusUnauthorized, "invalid API token")
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	}
+}
+
+// registerAPIRoutes wires all REST endpoints into the given mux.
+func registerAPIRoutes(mux *http.ServeMux, provider SessionProvider, apiToken string) {
+	h := &apiHandler{provider: provider, apiToken: apiToken}
+
+	mux.HandleFunc("GET /api/sessions", h.AuthMiddleware(http.HandlerFunc(h.listSessions)))
+	mux.HandleFunc("GET /api/sessions/{id}", h.AuthMiddleware(http.HandlerFunc(h.getSession)))
+	mux.HandleFunc("GET /api/sessions/{id}/tunnels", h.AuthMiddleware(http.HandlerFunc(h.getTunnels)))
+	mux.HandleFunc("POST /api/sessions/{id}/tunnels", h.AuthMiddleware(http.HandlerFunc(h.addTunnel)))
+	mux.HandleFunc("DELETE /api/sessions/{id}/tunnels/{tid}", h.AuthMiddleware(http.HandlerFunc(h.removeTunnel)))
+	mux.HandleFunc("GET /api/sessions/{id}/routes", h.AuthMiddleware(http.HandlerFunc(h.getRoutes)))
+	mux.HandleFunc("POST /api/sessions/{id}/routes", h.AuthMiddleware(http.HandlerFunc(h.addRoute)))
+	mux.HandleFunc("DELETE /api/sessions/{id}/routes/{cidr}", h.AuthMiddleware(http.HandlerFunc(h.removeRoute)))
 }
 
 func (h *apiHandler) listSessions(w http.ResponseWriter, r *http.Request) {

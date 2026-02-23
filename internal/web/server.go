@@ -17,17 +17,19 @@ type Server struct {
 	ListenAddr string
 	Provider   SessionProvider
 	Events     *EventBus
+	APIToken   string
 	httpSrv    *http.Server
 	listener   net.Listener
 	logger     *log.Logger
 }
 
 // NewServer creates a Server ready to Start.
-func NewServer(addr string, provider SessionProvider, events *EventBus) *Server {
+func NewServer(addr string, provider SessionProvider, events *EventBus, apiToken string) *Server {
 	return &Server{
 		ListenAddr: addr,
 		Provider:   provider,
 		Events:     events,
+		APIToken:   apiToken,
 		logger:     log.New(os.Stderr, "[web] ", log.LstdFlags),
 	}
 }
@@ -37,10 +39,11 @@ func (s *Server) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 
 	// REST API routes
-	registerAPIRoutes(mux, s.Provider)
+	registerAPIRoutes(mux, s.Provider, s.APIToken)
 
-	// SSE event stream
-	mux.Handle("GET /api/events", s.Events)
+	// SSE event stream (Also protected by AuthMiddleware to prevent unauthorized event snooping)
+	h := &apiHandler{apiToken: s.APIToken}
+	mux.HandleFunc("GET /api/events", h.AuthMiddleware(s.Events))
 
 	// Embedded static files served under /static/
 	staticSub, err := fs.Sub(StaticFS, "static")
