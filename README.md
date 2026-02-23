@@ -690,25 +690,25 @@ All endpoints return JSON.
 
 ```bash
 # List sessions
-curl -H "Authorization: Bearer <token>" http://127.0.0.1:8080/api/sessions
+curl -H "Authorization: Bearer <token>" http://127.0.0.1:9090/api/sessions
 
 # Create a tunnel
-curl -X POST http://127.0.0.1:8080/api/sessions/session-abc123/tunnels \
+curl -X POST http://127.0.0.1:9090/api/sessions/session-abc123/tunnels \
   -H "Authorization: Bearer <token>" \
   -H 'Content-Type: application/json' \
   -d '{"direction":"local","listen":"127.0.0.1:8080","remote":"10.0.0.5:80","protocol":"tcp"}'
 
 # Add a route
-curl -X POST http://127.0.0.1:8080/api/sessions/session-abc123/routes \
+curl -X POST http://127.0.0.1:9090/api/sessions/session-abc123/routes \
   -H "Authorization: Bearer <token>" \
   -H 'Content-Type: application/json' \
   -d '{"cidr":"10.0.0.0/24"}'
 
 # Remove a tunnel
-curl -X DELETE http://127.0.0.1:8080/api/sessions/session-abc123/tunnels/tun-001
+curl -X DELETE http://127.0.0.1:9090/api/sessions/session-abc123/tunnels/tun-001
 
 # Subscribe to live events
-curl http://127.0.0.1:8080/api/events
+curl http://127.0.0.1:9090/api/events
 ```
 
 ---
