@@ -118,6 +118,58 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["target", "port"],
             },
         ),
+        types.Tool(
+            name="scan",
+            description="Scan a subnet for reachable hosts and open ports.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "subnet": {
+                        "type": "string",
+                        "description": "CIDR subnet to scan (e.g. 10.0.0.0/24).",
+                    },
+                    "ports": {
+                        "type": "string",
+                        "description": "Comma-separated ports to scan (e.g. 22,80,443).",
+                        "default": "",
+                    },
+                    "timeout": {
+                        "type": "string",
+                        "description": "Per-port timeout (e.g. 2s).",
+                        "default": "2s",
+                    },
+                    "concurrency": {
+                        "type": "integer",
+                        "description": "Max concurrent connections.",
+                        "default": 256,
+                    },
+                },
+                "required": ["subnet"],
+            },
+        ),
+        types.Tool(
+            name="relay",
+            description="Bidirectional relay between two endpoints (socat-style).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "description": "Source endpoint spec (e.g. tcp-listen:8080).",
+                    },
+                    "dest": {
+                        "type": "string",
+                        "description": "Destination endpoint spec (e.g. tcp-connect:10.0.0.5:80).",
+                    },
+                    "tls": {
+                        "type": "boolean",
+                        "description": "Wrap relay in TLS.",
+                        "default": False,
+                    },
+                },
+                "required": ["source", "dest"],
+            },
+        ),
     ]
 
 @server.call_tool()
@@ -162,6 +214,27 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             cmd.extend(["--hop", h])
         if local_port != "0":
             cmd.extend(["--local-port", local_port])
+        result = await _run_background(cmd)
+        return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+
+    elif name == "scan":
+        subnet = arguments["subnet"]
+        ports = arguments.get("ports", "")
+        timeout = arguments.get("timeout", "2s")
+        concurrency = int(arguments.get("concurrency", 256))
+        cmd = [bin_path, "scan", "--subnet", subnet, "--timeout", timeout, "--concurrency", str(concurrency)]
+        if ports:
+            cmd.extend(["--ports", ports])
+        result = await _run_background(cmd)
+        return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+
+    elif name == "relay":
+        source = arguments["source"]
+        dest = arguments["dest"]
+        tls = arguments.get("tls", False)
+        cmd = [bin_path, "relay", source, dest]
+        if tls:
+            cmd.append("--tls")
         result = await _run_background(cmd)
         return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
 
