@@ -817,7 +817,6 @@ Controls:
 
 Examples:
   burrow tui
-  burrow tui --api-url http://localhost:9090
   burrow tui --api-url https://server:9090 --token <api-token>`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		apiURL, _ := cmd.Flags().GetString("api-url")
@@ -836,7 +835,7 @@ Examples:
 }
 
 func init() {
-	tuiCmd.Flags().String("api-url", "http://localhost:8080", "Burrow API URL")
+	tuiCmd.Flags().String("api-url", "https://localhost:9090", "Burrow API URL")
 	tuiCmd.Flags().String("token", "", "API authentication token")
 	rootCmd.AddCommand(tuiCmd)
 }

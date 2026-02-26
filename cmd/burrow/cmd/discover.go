@@ -93,7 +93,7 @@ func init() {
 	scanCmd.Flags().StringP("subnet", "s", "", "Subnet to scan (CIDR or prefix, e.g. 10.0.0.0/24)")
 	scanCmd.Flags().StringP("ports", "p", "", "Comma-separated ports (default: top 20)")
 	scanCmd.Flags().String("timeout", "2s", "Per-port timeout")
-	scanCmd.Flags().IntP("concurrency", "c", 256, "Max concurrent connections")
+	scanCmd.Flags().Int("concurrency", 256, "Max concurrent connections")
 	scanCmd.MarkFlagRequired("subnet")
 }
 

@@ -81,7 +81,7 @@ Example:
 
 func init() {
 	rootCmd.AddCommand(pivotCmd)
-	pivotCmd.Flags().StringP("target", "t", "", "Final target host")
+	pivotCmd.Flags().String("target", "", "Final target host")
 	pivotCmd.Flags().IntP("port", "p", 8443, "Final target port")
 	pivotCmd.Flags().StringSlice("hop", nil, "Intermediate hops (host:port), can be repeated")
 	pivotCmd.Flags().Int("local-port", 0, "Open local listener on this port (0 = disabled)")

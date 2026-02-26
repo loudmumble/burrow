@@ -41,7 +41,7 @@ Examples:
   burrow agent --connect wss://10.0.0.1:443 --transport ws
   burrow agent --connect 10.0.0.1:5353 --transport dns
   burrow agent --connect 10.0.0.1 --transport icmp
-  burrow agent -c 10.0.0.1:11601 --retry 5`,
+  burrow agent -c 10.0.0.1:11601 --max-retries 5`,
 	Run: runAgent,
 }
 
@@ -50,7 +50,7 @@ func init() {
 
 	agentCmd.Flags().StringP("connect", "c", "", "Server address to connect to (required)")
 	agentCmd.Flags().String("fingerprint", "", "Expected server TLS fingerprint for verification")
-	agentCmd.Flags().Int("retry", 0, "Max reconnection attempts (0 = infinite)")
+	agentCmd.Flags().Int("max-retries", 0, "Max reconnection attempts (0 = infinite)")
 	agentCmd.Flags().StringP("transport", "t", "raw", "Transport protocol (raw, ws, dns, icmp)")
 	agentCmd.Flags().Bool("no-tls", false, "Connect without TLS")
 	agentCmd.MarkFlagRequired("connect")
@@ -59,7 +59,7 @@ func init() {
 func runAgent(cmd *cobra.Command, _ []string) {
 	serverAddr, _ := cmd.Flags().GetString("connect")
 	fingerprint, _ := cmd.Flags().GetString("fingerprint")
-	maxRetry, _ := cmd.Flags().GetInt("retry")
+	maxRetry, _ := cmd.Flags().GetInt("max-retries")
 	transportName, _ := cmd.Flags().GetString("transport")
 	noTLS, _ := cmd.Flags().GetBool("no-tls")
 
