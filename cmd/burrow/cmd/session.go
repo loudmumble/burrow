@@ -74,7 +74,7 @@ var sessionListCmd = &cobra.Command{
 
 Example:
   burrow session list
-  burrow session list --webui 127.0.0.1:9090
+  burrow session list --webui 0.0.0.0:9090
   burrow session list --token <api-token>`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		webuiAddr, _ := cmd.Flags().GetString("webui")
@@ -280,7 +280,7 @@ func init() {
 	sessionCmd.AddCommand(sessionInfoCmd)
 	sessionCmd.AddCommand(sessionUseCmd)
 
-	sessionCmd.PersistentFlags().String("webui", "127.0.0.1:9090", "WebUI server address")
+	sessionCmd.PersistentFlags().String("webui", "0.0.0.0:9090", "WebUI server address")
 	sessionCmd.PersistentFlags().String("token", "", "API authentication token")
 	sessionCmd.PersistentFlags().Bool("no-tls", false, "Use plain HTTP instead of HTTPS")
 }

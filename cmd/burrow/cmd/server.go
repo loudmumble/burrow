@@ -53,8 +53,8 @@ func init() {
 	serverCmd.Flags().String("key", "", "Path to TLS private key PEM file")
 	serverCmd.Flags().Bool("mcp-api", false, "Enable agent REST API for MCP server integration")
 	serverCmd.Flags().String("api-token", "", "Token for API authentication (auto-generated if empty)")
-	serverCmd.Flags().String("webui", "", "Enable WebUI dashboard (default: 127.0.0.1:9090)")
-	serverCmd.Flags().Lookup("webui").NoOptDefVal = "127.0.0.1:9090"
+	serverCmd.Flags().String("webui", "", "Enable WebUI dashboard (default: 0.0.0.0:9090)")
+	serverCmd.Flags().Lookup("webui").NoOptDefVal = "0.0.0.0:9090"
 	serverCmd.Flags().Bool("no-tls", false, "Disable TLS (use plain TCP)")
 	serverCmd.Flags().StringP("transport", "t", "raw", "Transport protocol (raw, ws, dns, icmp)")
 }
