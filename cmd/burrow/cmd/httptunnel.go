@@ -32,9 +32,9 @@ The server accepts HTTP POST requests and manages TCP sessions to internal hosts
 A fake HTML page is served on GET / for cover.
 
 Example:
-  burrow httptunnel server --listen 0.0.0.0:8080
-  burrow httptunnel server --listen 0.0.0.0:443 --key s3cret
-  burrow httptunnel server --listen :8080 --path /api/health --key mykey`,
+  burrow httptunnel server -l 0.0.0.0:8080
+  burrow httptunnel server -l 0.0.0.0:443 -k s3cret
+  burrow httptunnel server -l :8080 --path /api/health -k mykey`,
 	Run: func(cmd *cobra.Command, args []string) {
 		listen, _ := cmd.Flags().GetString("listen")
 		key, _ := cmd.Flags().GetString("key")
@@ -91,16 +91,16 @@ All SOCKS5 traffic is tunneled through HTTP to the server, which relays
 TCP connections to internal hosts.
 
 Example:
-  burrow httptunnel client --url http://target:8080/b --socks 127.0.0.1:1080
-  burrow httptunnel client --url https://target:443/b --key s3cret
-  burrow httptunnel client --url http://target:8080/api/health --key mykey --socks 0.0.0.0:9050`,
+  burrow httptunnel client -c http://target:8080/b -l 127.0.0.1:1080
+  burrow httptunnel client -c https://target:443/b -k s3cret
+  burrow httptunnel client -c http://target:8080/api/health -k mykey -l 0.0.0.0:9050`,
 	Run: func(cmd *cobra.Command, args []string) {
-		serverURL, _ := cmd.Flags().GetString("url")
+		serverURL, _ := cmd.Flags().GetString("connect")
 		key, _ := cmd.Flags().GetString("key")
-		socksAddr, _ := cmd.Flags().GetString("socks")
+		socksAddr, _ := cmd.Flags().GetString("listen")
 
 		if serverURL == "" {
-			fmt.Fprintln(os.Stderr, "[!] --url is required")
+			fmt.Fprintln(os.Stderr, "[!] -c / --connect is required")
 			os.Exit(1)
 		}
 
@@ -152,11 +152,11 @@ func init() {
 
 	// Server flags
 	httptunnelServerCmd.Flags().StringP("listen", "l", "0.0.0.0:8080", "Listen address (host:port)")
-	httptunnelServerCmd.Flags().String("key", "", "Shared encryption/authentication key")
+	httptunnelServerCmd.Flags().StringP("key", "k", "", "Shared encryption/authentication key")
 	httptunnelServerCmd.Flags().String("path", "/b", "URL path for tunnel endpoint")
 
 	// Client flags
-	httptunnelClientCmd.Flags().String("url", "", "HTTP tunnel server URL (e.g., http://target:8080/b)")
-	httptunnelClientCmd.Flags().String("socks", "127.0.0.1:1080", "Local SOCKS5 listen address")
-	httptunnelClientCmd.Flags().String("key", "", "Shared encryption/authentication key")
+	httptunnelClientCmd.Flags().StringP("connect", "c", "", "HTTP tunnel server URL (e.g., http://target:8080/b)")
+	httptunnelClientCmd.Flags().StringP("listen", "l", "127.0.0.1:1080", "Local SOCKS5 listen address")
+	httptunnelClientCmd.Flags().StringP("key", "k", "", "Shared encryption/authentication key")
 }

