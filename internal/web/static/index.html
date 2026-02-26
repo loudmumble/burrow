@@ -15,9 +15,22 @@
         <li><h1>Burrow</h1></li>
       </ul>
       <ul>
+        <li>
+          <span class="status-dot" :class="connected ? 'active' : 'inactive'"></span>
+          <small x-text="connected ? 'Connected' : 'Disconnected'"></small>
+        </li>
+        <li>
+          <small x-show="token" class="token-ok">Token configured</small>
+          <small x-show="!token" class="token-missing">No token set</small>
+        </li>
         <li><small x-text="sessions.length + ' agents connected'"></small></li>
       </ul>
     </nav>
+
+    <div class="error-banner" x-show="errorMessage" x-cloak>
+      <span x-text="errorMessage"></span>
+      <button class="outline" @click="dismissError()">Dismiss</button>
+    </div>
 
     <div class="grid">
       <div>

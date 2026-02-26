@@ -2,6 +2,8 @@
   --status-active: #2ecc71;
   --status-inactive: #e74c3c;
   --card-selected: rgba(46, 204, 113, 0.15);
+  --error-bg: rgba(231, 76, 60, 0.15);
+  --error-border: #e74c3c;
 }
 
 nav h1 {
@@ -44,4 +46,39 @@ nav h1 {
 button.outline.secondary {
   padding: 0.25rem 0.5rem;
   font-size: 0.8rem;
+}
+
+.error-banner {
+  background-color: var(--error-bg);
+  border: 1px solid var(--error-border);
+  border-radius: 4px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.error-banner span {
+  flex: 1;
+}
+
+.error-banner button {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.8rem;
+}
+
+.token-ok {
+  color: var(--status-active);
+}
+
+.token-missing {
+  color: var(--status-inactive);
+}
+
+[x-cloak] {
+  display: none !important;
 }

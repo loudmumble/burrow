@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,49 @@ import (
 
 	"github.com/spf13/cobra"
 )
+
+// sessionHTTPClient returns an HTTP client configured for the session commands.
+// When using HTTPS with self-signed certs, TLS verification is skipped.
+func sessionHTTPClient(useTLS bool) *http.Client {
+	if useTLS {
+		return &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		}
+	}
+	return &http.Client{}
+}
+
+// sessionBaseURL constructs the base URL from address and TLS mode.
+func sessionBaseURL(addr string, noTLS bool) string {
+	scheme := "https"
+	if noTLS {
+		scheme = "http"
+	}
+	return fmt.Sprintf("%s://%s", scheme, addr)
+}
+
+// newAuthRequest creates an HTTP request with the Authorization header set.
+func newAuthRequest(method, reqURL string, body io.Reader, token string) (*http.Request, error) {
+	req, err := http.NewRequest(method, reqURL, body)
+	if err != nil {
+		return nil, err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return req, nil
+}
+
+// doAuthGet performs an authenticated GET request.
+func doAuthGet(client *http.Client, reqURL, token string) (*http.Response, error) {
+	req, err := newAuthRequest(http.MethodGet, reqURL, nil, token)
+	if err != nil {
+		return nil, err
+	}
+	return client.Do(req)
+}
 
 var sessionCmd = &cobra.Command{
 	Use:   "session",
@@ -30,17 +74,28 @@ var sessionListCmd = &cobra.Command{
 
 Example:
   burrow session list
-  burrow session list --webui 127.0.0.1:9090`,
+  burrow session list --webui 127.0.0.1:9090
+  burrow session list --token <api-token>`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		webuiAddr, _ := cmd.Flags().GetString("webui")
-		apiURL := fmt.Sprintf("http://%s/api/sessions", webuiAddr)
+		token, _ := cmd.Flags().GetString("token")
+		noTLS, _ := cmd.Flags().GetBool("no-tls")
 
-		resp, err := http.Get(apiURL)
+		client := sessionHTTPClient(!noTLS)
+		baseURL := sessionBaseURL(webuiAddr, noTLS)
+		apiURL := baseURL + "/api/sessions"
+
+		resp, err := doAuthGet(client, apiURL, token)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[!] Failed to connect to server at %s: %v\n", webuiAddr, err)
 			os.Exit(1)
 		}
 		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusUnauthorized {
+			fmt.Fprintf(os.Stderr, "[!] Authentication failed (401). Check your --token value.\n")
+			os.Exit(1)
+		}
 
 		var sessions []struct {
 			ID        string   `json:"id"`
@@ -78,19 +133,29 @@ var sessionInfoCmd = &cobra.Command{
 hostname, OS, IP addresses, active tunnels, and routes.
 
 Example:
-  burrow session info abc123`,
+  burrow session info abc123
+  burrow session info abc123 --token <api-token>`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		sessionID := args[0]
 		webuiAddr, _ := cmd.Flags().GetString("webui")
-		baseURL := fmt.Sprintf("http://%s", webuiAddr)
+		token, _ := cmd.Flags().GetString("token")
+		noTLS, _ := cmd.Flags().GetBool("no-tls")
 
-		resp, err := http.Get(baseURL + "/api/sessions/" + sessionID)
+		client := sessionHTTPClient(!noTLS)
+		baseURL := sessionBaseURL(webuiAddr, noTLS)
+
+		resp, err := doAuthGet(client, baseURL+"/api/sessions/"+sessionID, token)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[!] Failed to connect: %v\n", err)
 			os.Exit(1)
 		}
 		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusUnauthorized {
+			fmt.Fprintf(os.Stderr, "[!] Authentication failed (401). Check your --token value.\n")
+			os.Exit(1)
+		}
 
 		if resp.StatusCode == http.StatusNotFound {
 			fmt.Fprintf(os.Stderr, "[!] Session %s not found\n", sessionID)
@@ -118,8 +183,8 @@ Example:
 		fmt.Printf("    Status:    %s\n", status)
 		fmt.Printf("    Created:   %s\n", sess.CreatedAt)
 
-		printSessionTunnels(baseURL, sessionID)
-		printSessionRoutes(baseURL, sessionID)
+		printSessionTunnels(client, baseURL, sessionID, token)
+		printSessionRoutes(client, baseURL, sessionID, token)
 	},
 }
 
@@ -140,19 +205,28 @@ Commands available in the interactive shell:
   exit                              Exit interactive mode
 
 Example:
-  burrow session use abc123`,
+  burrow session use abc123
+  burrow session use abc123 --token <api-token>`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		sessionID := args[0]
 		webuiAddr, _ := cmd.Flags().GetString("webui")
-		baseURL := fmt.Sprintf("http://%s", webuiAddr)
+		token, _ := cmd.Flags().GetString("token")
+		noTLS, _ := cmd.Flags().GetBool("no-tls")
 
-		resp, err := http.Get(baseURL + "/api/sessions/" + sessionID)
+		client := sessionHTTPClient(!noTLS)
+		baseURL := sessionBaseURL(webuiAddr, noTLS)
+
+		resp, err := doAuthGet(client, baseURL+"/api/sessions/"+sessionID, token)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[!] Failed to connect: %v\n", err)
 			os.Exit(1)
 		}
 		resp.Body.Close()
+		if resp.StatusCode == http.StatusUnauthorized {
+			fmt.Fprintf(os.Stderr, "[!] Authentication failed (401). Check your --token value.\n")
+			os.Exit(1)
+		}
 		if resp.StatusCode == http.StatusNotFound {
 			fmt.Fprintf(os.Stderr, "[!] Session %s not found\n", sessionID)
 			os.Exit(1)
@@ -173,15 +247,15 @@ Example:
 			case "exit", "quit":
 				return
 			case "info":
-				replInfo(baseURL, sessionID)
+				replInfo(client, baseURL, sessionID, token)
 			case "tunnels":
-				printSessionTunnels(baseURL, sessionID)
+				printSessionTunnels(client, baseURL, sessionID, token)
 			case "routes":
-				printSessionRoutes(baseURL, sessionID)
+				printSessionRoutes(client, baseURL, sessionID, token)
 			case "tunnel":
-				handleTunnelCmd(baseURL, sessionID, parts[1:])
+				handleTunnelCmd(client, baseURL, sessionID, parts[1:], token)
 			case "route":
-				handleRouteCmd(baseURL, sessionID, parts[1:])
+				handleRouteCmd(client, baseURL, sessionID, parts[1:], token)
 			case "help":
 				fmt.Println("Commands:")
 				fmt.Println("  info                              Session details")
@@ -206,13 +280,13 @@ func init() {
 	sessionCmd.AddCommand(sessionInfoCmd)
 	sessionCmd.AddCommand(sessionUseCmd)
 
-	sessionListCmd.Flags().String("webui", "127.0.0.1:9090", "WebUI server address")
-	sessionInfoCmd.Flags().String("webui", "127.0.0.1:9090", "WebUI server address")
-	sessionUseCmd.Flags().String("webui", "127.0.0.1:9090", "WebUI server address")
+	sessionCmd.PersistentFlags().String("webui", "127.0.0.1:9090", "WebUI server address")
+	sessionCmd.PersistentFlags().String("token", "", "API authentication token")
+	sessionCmd.PersistentFlags().Bool("no-tls", false, "Use plain HTTP instead of HTTPS")
 }
 
-func printSessionTunnels(baseURL, sessionID string) {
-	resp, err := http.Get(baseURL + "/api/sessions/" + sessionID + "/tunnels")
+func printSessionTunnels(client *http.Client, baseURL, sessionID, token string) {
+	resp, err := doAuthGet(client, baseURL+"/api/sessions/"+sessionID+"/tunnels", token)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[!] Failed to get tunnels: %v\n", err)
 		return
@@ -244,8 +318,8 @@ func printSessionTunnels(baseURL, sessionID string) {
 	}
 }
 
-func printSessionRoutes(baseURL, sessionID string) {
-	resp, err := http.Get(baseURL + "/api/sessions/" + sessionID + "/routes")
+func printSessionRoutes(client *http.Client, baseURL, sessionID, token string) {
+	resp, err := doAuthGet(client, baseURL+"/api/sessions/"+sessionID+"/routes", token)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[!] Failed to get routes: %v\n", err)
 		return
@@ -272,8 +346,8 @@ func printSessionRoutes(baseURL, sessionID string) {
 	}
 }
 
-func replInfo(baseURL, sessionID string) {
-	resp, err := http.Get(baseURL + "/api/sessions/" + sessionID)
+func replInfo(client *http.Client, baseURL, sessionID, token string) {
+	resp, err := doAuthGet(client, baseURL+"/api/sessions/"+sessionID, token)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[!] %v\n", err)
 		return
@@ -297,7 +371,7 @@ func replInfo(baseURL, sessionID string) {
 	fmt.Printf("  Created:   %s\n", sess.CreatedAt)
 }
 
-func handleTunnelCmd(baseURL, sessionID string, args []string) {
+func handleTunnelCmd(client *http.Client, baseURL, sessionID string, args []string, token string) {
 	if len(args) == 0 {
 		fmt.Println("Usage: tunnel add <direction> <listen> <remote>  |  tunnel rm <id>")
 		return
@@ -314,11 +388,15 @@ func handleTunnelCmd(baseURL, sessionID string, args []string) {
 		}
 		body := fmt.Sprintf(`{"direction":%q,"listen":%q,"remote":%q,"protocol":%q}`,
 			args[1], args[2], args[3], proto)
-		resp, err := http.Post(
+		req, err := newAuthRequest(http.MethodPost,
 			baseURL+"/api/sessions/"+sessionID+"/tunnels",
-			"application/json",
-			strings.NewReader(body),
-		)
+			strings.NewReader(body), token)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[!] %v\n", err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[!] %v\n", err)
 			return
@@ -340,9 +418,13 @@ func handleTunnelCmd(baseURL, sessionID string, args []string) {
 			fmt.Println("Usage: tunnel rm <tunnel-id>")
 			return
 		}
-		req, _ := http.NewRequest(http.MethodDelete,
-			baseURL+"/api/sessions/"+sessionID+"/tunnels/"+args[1], nil)
-		resp, err := http.DefaultClient.Do(req)
+		req, err := newAuthRequest(http.MethodDelete,
+			baseURL+"/api/sessions/"+sessionID+"/tunnels/"+args[1], nil, token)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[!] %v\n", err)
+			return
+		}
+		resp, err := client.Do(req)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[!] %v\n", err)
 			return
@@ -359,7 +441,7 @@ func handleTunnelCmd(baseURL, sessionID string, args []string) {
 	}
 }
 
-func handleRouteCmd(baseURL, sessionID string, args []string) {
+func handleRouteCmd(client *http.Client, baseURL, sessionID string, args []string, token string) {
 	if len(args) == 0 {
 		fmt.Println("Usage: route add <cidr>  |  route rm <cidr>")
 		return
@@ -371,11 +453,15 @@ func handleRouteCmd(baseURL, sessionID string, args []string) {
 			return
 		}
 		body := fmt.Sprintf(`{"cidr":%q}`, args[1])
-		resp, err := http.Post(
+		req, err := newAuthRequest(http.MethodPost,
 			baseURL+"/api/sessions/"+sessionID+"/routes",
-			"application/json",
-			strings.NewReader(body),
-		)
+			strings.NewReader(body), token)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[!] %v\n", err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[!] %v\n", err)
 			return
@@ -394,9 +480,13 @@ func handleRouteCmd(baseURL, sessionID string, args []string) {
 			return
 		}
 		escaped := url.PathEscape(args[1])
-		req, _ := http.NewRequest(http.MethodDelete,
-			baseURL+"/api/sessions/"+sessionID+"/routes/"+escaped, nil)
-		resp, err := http.DefaultClient.Do(req)
+		req, err := newAuthRequest(http.MethodDelete,
+			baseURL+"/api/sessions/"+sessionID+"/routes/"+escaped, nil, token)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[!] %v\n", err)
+			return
+		}
+		resp, err := client.Do(req)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[!] %v\n", err)
 			return
