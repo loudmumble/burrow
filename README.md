@@ -1108,6 +1108,42 @@ internal/
 
 ---
 
+### `burrow tui`
+
+Interactive terminal UI dashboard built with bubbletea. Provides a full-screen interface for managing sessions, tunnels, and routes without needing to remember CLI flags or API endpoints.
+
+Requires a running Burrow server with `--webui` enabled.
+
+**Flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--api-url` | `https://127.0.0.1:9090` | WebUI API base URL |
+| `--token` | | API authentication token |
+
+**Examples:**
+
+```bash
+# Launch TUI with defaults
+burrow tui --token <api-token>
+
+# Connect to remote server
+burrow tui --api-url https://10.0.0.1:9090 --token <api-token>
+```
+
+**Views:**
+
+| View | Description | Key Bindings |
+|------|-------------|-------------|
+| Sessions List | Browse all active agent sessions with hostname, OS, IPs, and creation time | `↑/↓` navigate, `Enter` view details, `a` add tunnel, `r` add route, `q` quit |
+| Session Detail | Detailed view of a session including active tunnels and routes | `Esc` back to list |
+| Add Tunnel | Form to create a new tunnel (direction, listen address, remote address, protocol) | `Tab` next field, `Enter` submit, `Esc` cancel |
+| Add Route | Form to add a network route (CIDR notation) | `Tab` next field, `Enter` submit, `Esc` cancel |
+
+**Dependencies:** bubbletea v1.3.10, lipgloss v1.1.0, bubbles v1.0.0
+
+---
+
 ## Protocol Reference
 
 Binary frame format:
@@ -1157,3 +1193,6 @@ Max payload: 1 MB. All structured payloads are JSON-encoded.
 | github.com/songgao/water | TUN interface |
 | github.com/nicocha30/gvisor-ligolo | Userspace TCP/IP netstack |
 | Module: github.com/loudmumble/burrow | |
+| github.com/charmbracelet/bubbletea | Terminal UI framework |
+| github.com/charmbracelet/lipgloss | Terminal styling |
+| github.com/charmbracelet/bubbles | UI component library |
