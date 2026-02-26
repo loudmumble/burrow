@@ -21,6 +21,7 @@ import (
 	_ "github.com/loudmumble/burrow/internal/transport/icmp"
 	_ "github.com/loudmumble/burrow/internal/transport/raw"
 	_ "github.com/loudmumble/burrow/internal/transport/ws"
+	_ "github.com/loudmumble/burrow/internal/transport/http"
 	"github.com/loudmumble/burrow/internal/web"
 	"github.com/spf13/cobra"
 )

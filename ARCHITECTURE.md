@@ -5,7 +5,7 @@
 ```
 cmd/burrow/cmd/
   root.go              Cobra root command, version 3.0.0
-  proxy.go             SOCKS5 proxy command
+  proxy.go             SOCKS5 + HTTP forward proxy commands
   forward.go           Local port forward command
   reverse.go           Reverse tunnel command
   pivot.go             Multi-hop pivot command
@@ -14,9 +14,11 @@ cmd/burrow/cmd/
   agent.go             Agent command (connects back to proxy server)
   session.go           Session list/info/use commands (--webui, --token, --no-tls persistent flags)
   relay.go             Socat-style bidirectional relay command
+  httptunnel.go        HTTP tunnel server + client commands (reGeorg-style)
+  generate.go          Webshell generator command (PHP/ASPX/JSP)
 
 internal/crypto/       X25519 ECDH + ChaCha20-Poly1305/AES-256-GCM frame encryption
-internal/proxy/        SOCKS5 server implementing RFC 1928
+internal/proxy/        SOCKS5 + HTTP forward proxy with session routing (Dialer hook)
 internal/tunnel/       Local, remote, and reverse TCP port forwarders
 internal/pivot/        Multi-hop chain orchestration
 internal/discovery/    Ping sweep + TCP port scanner
@@ -24,8 +26,14 @@ internal/certgen/      Ed25519 self-signed TLS cert generation + SHA256 fingerpr
 internal/transport/    Pluggable transport interface + registry
   raw/                 Raw TCP/TLS transport (default)
   ws/                  WebSocket transport (nhooyr.io/websocket)
+  http/                HTTP polling transport (virtual net.Conn over HTTP request/response pairs)
   dns/                 DNS tunnel transport
   icmp/                ICMP tunnel transport (requires raw socket privileges)
+internal/httptunnel/   reGeorg-style HTTP tunnel (server + client + binary protocol)
+  protocol.go          XOR encryption, base64 encoding, SHA256 auth token generation
+  server.go            HTTP handler: connect/send/recv/disconnect/ping with TCP session management
+  client.go            SOCKS5-to-HTTP tunnel client with polling
+  webshell/            Webshell generator (PHP/ASPX/JSP templates matching httptunnel protocol)
 internal/relay/        Socat-style bidirectional relay (TCP, UDP, Unix, exec, stdio)
 internal/mux/          yamux stream multiplexer (stream 0 = control, N = data)
 internal/protocol/     Binary message protocol (12 types, JSON payload, 1MB max)
@@ -59,6 +67,44 @@ Control channel (yamux stream 0):
   MsgTunnelClose                  -- tear down
 ```
 
+## HTTP Tunnel Data Flow (Egress-Blocked Scenario)
+
+```
+Attacker                                Target (no outbound)
++------------------+                    +--------------------+
+| httptunnel       |  HTTP POST         | httptunnel server  |
+| client           | ---- cmd=connect -> | (or webshell)      |
+| (SOCKS5 :1080)   | ---- cmd=send ----> | net.Dial() to      |
+|                  | <--- cmd=recv ----- | internal hosts     |
+|                  | ---- cmd=disconnect> |                    |
++------------------+                    +--------------------+
+
+Protocol:
+  POST /b?cmd=connect&target=10.0.0.5:22   -> {"sid":"a1b2c3"}
+  POST /b?cmd=send&sid=a1b2c3               -> XOR+base64 payload
+  POST /b?cmd=recv&sid=a1b2c3               <- XOR+base64 response
+  POST /b?cmd=disconnect&sid=a1b2c3         -> session closed
+  POST /b?cmd=ping                          -> "pong"
+
+Auth: X-Token header = SHA256(key) as hex string
+Encryption: XOR with shared key, then base64 encode
+```
+
+## HTTP Transport Data Flow
+
+```
+Agent                                   Server
++------------------+                    +------------------+
+| Virtual net.Conn |  HTTP polling      | Virtual net.Conn |
+| over HTTP        | -- POST /send ---> | over HTTP        |
+|                  | -- GET /recv -----> |                  |
+|                  | <- response data -- |                  |
++------------------+                    +------------------+
+
+Fake cover page served on GET / ("It works!" HTML page)
+TLS optional. Works through web proxies and WAFs.
+```
+
 ## Port Forward Data Flow (Tunnel Mode)
 
 ```
@@ -85,6 +131,8 @@ Browser/HTTP Client --> GET /static/* --> embedded Alpine.js + Pico CSS SPA
 - WebSocket mode: TLS over HTTPS for firewall evasion (looks like normal HTTPS)
 - Frame encryption: X25519 ECDH key exchange, HKDF-SHA256 derivation, AEAD per frame
 - Key rotation: hourly, with 4-byte counter for anti-replay
+- HTTP tunnel: XOR encryption + base64 encoding + SHA256 X-Token auth (simpler model for webshell compat)
+- HTTP transport: same framing as other transports, tunneled over HTTP polling
 
 ## Integration Points
 

