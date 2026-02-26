@@ -54,7 +54,7 @@ Examples:
 				os.Exit(1)
 			}
 			fmt.Printf("[*] Webshell written to %s (%d bytes)\n", output, len(result))
-			fmt.Printf("[*] Connect with: burrow httptunnel client --url <url>/%s --key %s\n", output, key)
+			fmt.Printf("[*] Connect with: burrow httptunnel client -c <url>/%s -k %s\n", output, key)
 		} else {
 			fmt.Print(result)
 		}
