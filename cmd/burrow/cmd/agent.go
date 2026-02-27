@@ -16,6 +16,7 @@ import (
 
 	"github.com/loudmumble/burrow/internal/certgen"
 	"github.com/loudmumble/burrow/internal/mux"
+	"github.com/loudmumble/burrow/internal/netstack"
 	"github.com/loudmumble/burrow/internal/protocol"
 	"github.com/loudmumble/burrow/internal/transport"
 	_ "github.com/loudmumble/burrow/internal/transport/dns"
@@ -223,7 +224,21 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 	activeTunnels := make(map[string]*tunnel.Tunnel)
 	activeListeners := make(map[string]net.Listener)
 	activeRoutes := make(map[string]string)
+
+	var tunNS *netstack.Stack
+	var tunStream net.Conn
+	var tunCancel context.CancelFunc
+
 	defer func() {
+		if tunCancel != nil {
+			tunCancel()
+		}
+		if tunStream != nil {
+			tunStream.Close()
+		}
+		if tunNS != nil {
+			tunNS.Close()
+		}
 		for _, t := range activeTunnels {
 			t.Stop()
 		}
@@ -357,6 +372,48 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 				ackMsg, _ := protocol.EncodeListenerAck(ackPayload)
 				protocol.WriteMessage(ctrl, ackMsg)
 
+			case protocol.MsgTunStart:
+				fmt.Println("[*] TUN start requested by server")
+				ns, nsErr := netstack.New(netstack.Opts{})
+				ackPayload := &protocol.TunStartAckPayload{}
+				if nsErr != nil {
+					ackPayload.Error = nsErr.Error()
+				}
+				ackMsg, _ := protocol.EncodeTunStartAck(ackPayload)
+				protocol.WriteMessage(ctrl, ackMsg)
+				if nsErr != nil {
+					fmt.Fprintf(os.Stderr, "[!] TUN start failed: %v\n", nsErr)
+					continue
+				}
+				dataStream, streamErr := sess.Open()
+				if streamErr != nil {
+					ns.Close()
+					fmt.Fprintf(os.Stderr, "[!] TUN data stream failed: %v\n", streamErr)
+					continue
+				}
+				tunNS = ns
+				tunStream = dataStream
+				tunCtx, cancel := context.WithCancel(ctx)
+				tunCancel = cancel
+				go tunAgentRelay(tunCtx, dataStream, ns)
+				fmt.Println("[*] TUN mode active")
+
+			case protocol.MsgTunStop:
+				fmt.Println("[*] TUN stop requested")
+				if tunCancel != nil {
+					tunCancel()
+					tunCancel = nil
+				}
+				if tunStream != nil {
+					tunStream.Close()
+					tunStream = nil
+				}
+				if tunNS != nil {
+					tunNS.Close()
+					tunNS = nil
+				}
+				fmt.Println("[*] TUN mode stopped")
+
 			case protocol.MsgError:
 				errStr, _ := protocol.DecodeError(msg)
 				return fmt.Errorf("server error: %s", errStr)
@@ -412,4 +469,27 @@ func getLocalIPs() []string {
 
 func reconnectBackoff(attempt int) time.Duration {
 	return transport.Backoff(time.Second, attempt-1)
+}
+
+func tunAgentRelay(ctx context.Context, stream net.Conn, ns *netstack.Stack) {
+	// stream → netstack
+	go func() {
+		for {
+			pkt, err := protocol.ReadRawPacket(stream)
+			if err != nil {
+				return
+			}
+			ns.InjectPacket(pkt)
+		}
+	}()
+	// netstack → stream
+	for {
+		pkt, err := ns.ReadPacket(ctx)
+		if err != nil {
+			return
+		}
+		if err := protocol.WriteRawPacket(stream, pkt); err != nil {
+			return
+		}
+	}
 }

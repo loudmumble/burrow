@@ -256,6 +256,8 @@ Example:
 				handleTunnelCmd(client, baseURL, sessionID, parts[1:], token)
 			case "route":
 				handleRouteCmd(client, baseURL, sessionID, parts[1:], token)
+			case "tun":
+				handleTunCmd(client, baseURL, sessionID, parts[1:], token)
 			case "help":
 				fmt.Println("Commands:")
 				fmt.Println("  info                              Session details")
@@ -265,6 +267,8 @@ Example:
 				fmt.Println("  tunnel rm <tunnel-id>             Remove tunnel")
 				fmt.Println("  route add <cidr>                  Add route")
 				fmt.Println("  route rm <cidr>                   Remove route")
+				fmt.Println("  tun start                         Start TUN interface (root required)")
+				fmt.Println("  tun stop                          Stop TUN interface")
 				fmt.Println("  exit                              Exit")
 			default:
 				fmt.Printf("Unknown command: %s (type 'help')\n", parts[0])
@@ -500,5 +504,57 @@ func handleRouteCmd(client *http.Client, baseURL, sessionID string, args []strin
 
 	default:
 		fmt.Printf("Unknown route subcommand: %s\n", args[0])
+	}
+}
+
+func handleTunCmd(client *http.Client, baseURL, sessionID string, args []string, token string) {
+	if len(args) == 0 {
+		fmt.Println("Usage: tun start | tun stop")
+		return
+	}
+	switch args[0] {
+	case "start":
+		req, err := newAuthRequest(http.MethodPost, baseURL+"/api/sessions/"+sessionID+"/tun", nil, token)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[!] %v\n", err)
+			return
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[!] %v\n", err)
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			fmt.Fprintf(os.Stderr, "[!] TUN start failed: %s\n", string(body))
+			return
+		}
+		var result map[string]string
+		json.NewDecoder(resp.Body).Decode(&result)
+		fmt.Printf("[+] TUN interface %s started (magic IP: %s)\n", result["interface"], result["magic_ip"])
+		fmt.Println("[*] Routes added via 'route add' will auto-route through TUN")
+
+	case "stop":
+		req, err := newAuthRequest(http.MethodDelete, baseURL+"/api/sessions/"+sessionID+"/tun", nil, token)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[!] %v\n", err)
+			return
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[!] %v\n", err)
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			fmt.Println("[-] TUN interface stopped")
+		} else {
+			body, _ := io.ReadAll(resp.Body)
+			fmt.Fprintf(os.Stderr, "[!] TUN stop failed: %s\n", string(body))
+		}
+
+	default:
+		fmt.Printf("Unknown tun subcommand: %s\n", args[0])
 	}
 }

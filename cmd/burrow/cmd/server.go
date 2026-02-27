@@ -240,6 +240,8 @@ func handleAgentConn(conn net.Conn, mgr *session.Manager) {
 		return
 	}
 
+	go acceptDataStreams(sess, mgr, sessionID)
+
 	fmt.Printf("[*] Agent registered: session=%s host=%s os=%s ips=%v\n",
 		sessionID, handshake.Hostname, handshake.OS, handshake.IPs)
 	if err := serverCommandLoop(ctrl, mgr, sessionID); err != nil {
@@ -306,6 +308,19 @@ func serverCommandLoop(ctrl net.Conn, mgr *session.Manager, sessionID string) er
 			case protocol.MsgError:
 				errStr, _ := protocol.DecodeError(msg)
 				return fmt.Errorf("agent error: %s", errStr)
+			case protocol.MsgTunStartAck:
+				ack, err := protocol.DecodeTunStartAck(msg)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[!] Bad TUN start ack: %v\n", err)
+					continue
+				}
+				if ack.Error != "" {
+					fmt.Fprintf(os.Stderr, "[!] Agent TUN start failed: %s\n", ack.Error)
+					mgr.HandleTunAck(sessionID, ack.Error)
+				} else {
+					fmt.Printf("[*] Agent TUN mode ready\n")
+					mgr.HandleTunAck(sessionID, "")
+				}
 			default:
 				fmt.Fprintf(os.Stderr, "[!] Unexpected message from agent: %s\n", msg.Type)
 			}
@@ -324,4 +339,14 @@ func newSessionID() string {
 		return fmt.Sprintf("%x", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b)
+}
+
+func acceptDataStreams(sess *mux.Session, mgr *session.Manager, sessionID string) {
+	for {
+		stream, err := sess.Accept()
+		if err != nil {
+			return
+		}
+		mgr.HandleDataStream(sessionID, stream)
+	}
 }
