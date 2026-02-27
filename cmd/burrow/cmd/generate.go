@@ -20,7 +20,7 @@ var generateWebshellCmd = &cobra.Command{
 	Long: `Generate a webshell that implements the HTTP tunnel protocol.
 
 Deploy the generated file to the target's web root, then connect with:
-  burrow httptunnel client --url https://target/shell.php --key <key>
+  burrow httptunnel client -c https://target/shell.php -k <key>
 
 The webshell supports the same protocol as 'burrow httptunnel server':
   - XOR encryption with shared key
