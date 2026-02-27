@@ -50,6 +50,13 @@ const (
 	// MsgPong is a keepalive response.
 	MsgPong MessageType = 0x41
 
+	// MsgTunStart is sent by the proxy to request TUN mode activation.
+	MsgTunStart MessageType = 0x50
+	// MsgTunStartAck is sent by the agent to confirm TUN mode is active.
+	MsgTunStartAck MessageType = 0x51
+	// MsgTunStop is sent by the proxy to deactivate TUN mode.
+	MsgTunStop MessageType = 0x52
+
 	// MsgError carries an error string.
 	MsgError MessageType = 0xFF
 )
@@ -79,6 +86,12 @@ func (m MessageType) String() string {
 		return "Ping"
 	case MsgPong:
 		return "Pong"
+	case MsgTunStart:
+		return "TunStart"
+	case MsgTunStartAck:
+		return "TunStartAck"
+	case MsgTunStop:
+		return "TunStop"
 	case MsgError:
 		return "Error"
 	default:
@@ -406,4 +419,74 @@ func DecodeError(msg *Message) (string, error) {
 		return "", fmt.Errorf("%w: got %s, want Error", ErrTypeMismatch, msg.Type)
 	}
 	return string(msg.Payload), nil
+}
+
+// --- TUN mode payload and helpers ---
+
+// TunStartAckPayload is sent by the agent to confirm or reject TUN mode activation.
+type TunStartAckPayload struct {
+	Error string `json:"error,omitempty"`
+}
+
+// EncodeTunStart creates a TunStart message (empty payload).
+func EncodeTunStart() *Message {
+	return &Message{Type: MsgTunStart}
+}
+
+// EncodeTunStartAck creates a TunStartAck message from the given payload.
+func EncodeTunStartAck(p *TunStartAckPayload) (*Message, error) {
+	data, err := json.Marshal(p)
+	if err != nil {
+		return nil, fmt.Errorf("marshal tun start ack: %w", err)
+	}
+	return &Message{Type: MsgTunStartAck, Payload: data}, nil
+}
+
+// DecodeTunStartAck extracts a TunStartAckPayload from a message.
+func DecodeTunStartAck(msg *Message) (*TunStartAckPayload, error) {
+	if msg.Type != MsgTunStartAck {
+		return nil, fmt.Errorf("%w: got %s, want TunStartAck", ErrTypeMismatch, msg.Type)
+	}
+	var p TunStartAckPayload
+	if err := json.Unmarshal(msg.Payload, &p); err != nil {
+		return nil, fmt.Errorf("unmarshal tun start ack: %w", err)
+	}
+	return &p, nil
+}
+
+// EncodeTunStop creates a TunStop message (empty payload).
+func EncodeTunStop() *Message {
+	return &Message{Type: MsgTunStop}
+}
+
+// WriteRawPacket writes a length-prefixed raw IP packet to w.
+// Frame format: [length:4 big-endian][data:length]
+func WriteRawPacket(w io.Writer, data []byte) error {
+	var hdr [4]byte
+	binary.BigEndian.PutUint32(hdr[:], uint32(len(data)))
+	if _, err := w.Write(hdr[:]); err != nil {
+		return fmt.Errorf("write raw packet header: %w", err)
+	}
+	if _, err := w.Write(data); err != nil {
+		return fmt.Errorf("write raw packet data: %w", err)
+	}
+	return nil
+}
+
+// ReadRawPacket reads a length-prefixed raw IP packet from r.
+// Returns the packet data or an error.
+func ReadRawPacket(r io.Reader) ([]byte, error) {
+	var hdr [4]byte
+	if _, err := io.ReadFull(r, hdr[:]); err != nil {
+		return nil, fmt.Errorf("read raw packet header: %w", err)
+	}
+	length := binary.BigEndian.Uint32(hdr[:])
+	if length > MaxPayloadSize {
+		return nil, ErrPayloadTooLarge
+	}
+	buf := make([]byte, length)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return nil, fmt.Errorf("read raw packet data: %w", err)
+	}
+	return buf, nil
 }
