@@ -5,6 +5,7 @@
 package session
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/hex"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/loudmumble/burrow/internal/mux"
 	"github.com/loudmumble/burrow/internal/protocol"
+	"github.com/loudmumble/burrow/internal/tun"
 	"github.com/loudmumble/burrow/internal/web"
 )
 
@@ -39,12 +41,19 @@ type AgentConn struct {
 	routes  map[string]*web.RouteInfo
 	mu      sync.RWMutex
 	writeMu sync.Mutex
+
+	tunStream net.Conn    // yamux data stream for TUN packets
+	tunActive bool
+	tunReady  chan error  // signaled when data stream is ready
 }
 
 // Manager tracks all active agent sessions.
 type Manager struct {
-	sessions map[string]*AgentConn
-	mu       sync.RWMutex
+	sessions   map[string]*AgentConn
+	mu         sync.RWMutex
+	tunIface   *tun.Interface
+	tunSession string           // which session owns TUN
+	tunCancel  context.CancelFunc
 }
 
 // NewManager creates a new session manager.
@@ -327,6 +336,13 @@ func (m *Manager) AddRoute(sessionID, cidr string) (web.RouteInfo, error) {
 	ac.routes[cidr] = info
 	ac.mu.Unlock()
 
+	// If TUN is active for this session, add kernel route via TUN interface.
+	m.mu.RLock()
+	if m.tunIface != nil && m.tunSession == sessionID {
+		m.tunIface.AddRoute(cidr)
+	}
+	m.mu.RUnlock()
+
 	return *info, nil
 }
 
@@ -355,6 +371,13 @@ func (m *Manager) RemoveRoute(sessionID, cidr string) error {
 	ac.mu.Lock()
 	delete(ac.routes, cidr)
 	ac.mu.Unlock()
+
+	// If TUN is active for this session, remove kernel route from TUN interface.
+	m.mu.RLock()
+	if m.tunIface != nil && m.tunSession == sessionID {
+		m.tunIface.RemoveRoute(cidr)
+	}
+	m.mu.RUnlock()
 
 	return nil
 }
@@ -451,4 +474,220 @@ func (s *Server) Stop() error {
 		return ln.Close()
 	}
 	return nil
+}
+
+// --- TUN mode methods ---
+
+// StartTun activates the TUN interface for transparent routing on the given session.
+// Only one session can own the TUN interface at a time.
+func (m *Manager) StartTun(sessionID string) error {
+	m.mu.Lock()
+	if m.tunSession != "" {
+		m.mu.Unlock()
+		return fmt.Errorf("TUN already active on session %s", m.tunSession)
+	}
+	m.mu.Unlock()
+
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+	if ac.Ctrl == nil {
+		return fmt.Errorf("session %s has no control stream", sessionID)
+	}
+
+	// Create and configure TUN interface.
+	iface, err := tun.New("")
+	if err != nil {
+		return fmt.Errorf("create TUN: %w", err)
+	}
+	ip, mask := tun.DefaultMagicIP()
+	if err := iface.Configure(ip, mask); err != nil {
+		iface.Close()
+		return fmt.Errorf("configure TUN: %w", err)
+	}
+
+	// Prepare to receive data stream from agent.
+	ac.mu.Lock()
+	ac.tunReady = make(chan error, 1)
+	ac.mu.Unlock()
+
+	// Send MsgTunStart on control stream.
+	msg := protocol.EncodeTunStart()
+	ac.writeMu.Lock()
+	err = protocol.WriteMessage(ac.Ctrl, msg)
+	ac.writeMu.Unlock()
+	if err != nil {
+		iface.Close()
+		return fmt.Errorf("send TUN start: %w", err)
+	}
+
+	// Wait for agent to open data stream (signaled via HandleDataStream).
+	select {
+	case readyErr := <-ac.tunReady:
+		if readyErr != nil {
+			iface.Close()
+			return fmt.Errorf("agent TUN start: %w", readyErr)
+		}
+	case <-time.After(10 * time.Second):
+		iface.Close()
+		return fmt.Errorf("TUN start timeout: agent did not respond in 10s")
+	}
+
+	// Store TUN state and start relay goroutines.
+	tunCtx, tunCancel := context.WithCancel(context.Background())
+	m.mu.Lock()
+	m.tunIface = iface
+	m.tunSession = sessionID
+	m.tunCancel = tunCancel
+	m.mu.Unlock()
+
+	go m.tunRelayToStream(tunCtx, iface, ac)
+	go m.tunRelayFromStream(tunCtx, iface, ac)
+
+	return nil
+}
+
+// StopTun deactivates the TUN interface for the given session.
+func (m *Manager) StopTun(sessionID string) error {
+	m.mu.Lock()
+	if m.tunSession != sessionID {
+		m.mu.Unlock()
+		return fmt.Errorf("TUN not active on session %s", sessionID)
+	}
+	iface := m.tunIface
+	tunCancel := m.tunCancel
+	m.tunIface = nil
+	m.tunSession = ""
+	m.tunCancel = nil
+	m.mu.Unlock()
+
+	// Cancel relay goroutines.
+	if tunCancel != nil {
+		tunCancel()
+	}
+
+	// Close TUN interface.
+	if iface != nil {
+		iface.Close()
+	}
+
+	// Close data stream.
+	ac := m.getConn(sessionID)
+	if ac != nil {
+		ac.mu.Lock()
+		if ac.tunStream != nil {
+			ac.tunStream.Close()
+			ac.tunStream = nil
+		}
+		ac.tunActive = false
+		ac.mu.Unlock()
+
+		// Send MsgTunStop to agent.
+		if ac.Ctrl != nil {
+			stopMsg := protocol.EncodeTunStop()
+			ac.writeMu.Lock()
+			protocol.WriteMessage(ac.Ctrl, stopMsg)
+			ac.writeMu.Unlock()
+		}
+	}
+
+	return nil
+}
+
+// HandleTunAck processes a TUN start acknowledgment from the agent.
+func (m *Manager) HandleTunAck(sessionID, errStr string) {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return
+	}
+	ac.mu.RLock()
+	ch := ac.tunReady
+	ac.mu.RUnlock()
+	if ch == nil {
+		return
+	}
+	if errStr != "" {
+		select {
+		case ch <- fmt.Errorf("%s", errStr):
+		default:
+		}
+	}
+	// Success ack is signaled by HandleDataStream
+}
+
+// HandleDataStream stores the yamux data stream opened by the agent for TUN packets.
+func (m *Manager) HandleDataStream(sessionID string, stream net.Conn) {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		stream.Close()
+		return
+	}
+	ac.mu.Lock()
+	ac.tunStream = stream
+	ac.tunActive = true
+	ch := ac.tunReady
+	ac.mu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- nil:
+		default:
+		}
+	}
+}
+
+// IsTunActive returns whether TUN mode is active for the given session.
+func (m *Manager) IsTunActive(sessionID string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.tunSession == sessionID && m.tunIface != nil
+}
+
+// tunRelayToStream reads packets from the TUN interface and writes them to the data stream.
+func (m *Manager) tunRelayToStream(ctx context.Context, iface *tun.Interface, ac *AgentConn) {
+	buf := make([]byte, tun.DefaultMTU+64)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		n, err := iface.Read(buf)
+		if err != nil {
+			return
+		}
+		ac.mu.RLock()
+		stream := ac.tunStream
+		ac.mu.RUnlock()
+		if stream == nil {
+			return
+		}
+		if err := protocol.WriteRawPacket(stream, buf[:n]); err != nil {
+			return
+		}
+	}
+}
+
+// tunRelayFromStream reads packets from the data stream and writes them to the TUN interface.
+func (m *Manager) tunRelayFromStream(ctx context.Context, iface *tun.Interface, ac *AgentConn) {
+	ac.mu.RLock()
+	stream := ac.tunStream
+	ac.mu.RUnlock()
+	if stream == nil {
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		pkt, err := protocol.ReadRawPacket(stream)
+		if err != nil {
+			return
+		}
+		if _, err := iface.Write(pkt); err != nil {
+			return
+		}
+	}
 }
