@@ -1,3 +1,5 @@
+//go:build !windows
+
 // Package tun provides a TUN virtual network interface with magic IP (240.0.0.0/4)
 // routing for transparent network pivoting, following the ligolo-ng model.
 //
