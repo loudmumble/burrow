@@ -3,114 +3,255 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Burrow Dashboard</title>
+  <title>BURROW // Operator Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="/static/pico.min.css">
   <script defer src="/static/alpine.min.js"></script>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <main class="container" x-data="dashboard()" x-init="init()">
-    <nav>
-      <ul>
-        <li><h1>Burrow</h1></li>
-      </ul>
-      <ul>
-        <li>
-          <span class="status-dot" :class="connected ? 'active' : 'inactive'"></span>
-          <small x-text="connected ? 'Connected' : 'Disconnected'"></small>
-        </li>
-        <li>
-          <small x-show="token" class="token-ok">Token configured</small>
-          <small x-show="!token" class="token-missing">No token set</small>
-        </li>
-        <li><small x-text="sessions.length + ' agents connected'"></small></li>
-      </ul>
-    </nav>
 
-    <div class="error-banner" x-show="errorMessage" x-cloak>
-      <span x-text="errorMessage"></span>
-      <button class="outline" @click="dismissError()">Dismiss</button>
+<div class="app-layout" x-data="dashboard()" x-init="init()">
+
+  <!-- ═══ HEADER ══════════════════════════════════════════════════════════ -->
+  <header class="app-header">
+    <div class="header-brand">
+      <span class="brand-glyph">◈</span>
+      BURROW
     </div>
+    <div class="header-meta">
+      <div class="meta-item">
+        <span class="agent-count-badge"
+              x-text="sessions.length + ' AGENT' + (sessions.length !== 1 ? 'S' : '')"></span>
+      </div>
+      <div class="meta-item">
+        <span class="status-dot" :class="connected ? 'active pulse' : 'inactive'"></span>
+        <span x-text="connected ? 'SSE LIVE' : 'SSE DOWN'"></span>
+      </div>
+      <div class="meta-item">
+        <span x-show="token"  class="token-ok">● AUTH OK</span>
+        <span x-show="!token" class="token-missing">✕ NO TOKEN</span>
+      </div>
+    </div>
+  </header>
 
-    <div class="grid">
-      <div>
-        <h2>Sessions</h2>
+  <!-- ═══ ERROR BANNER ════════════════════════════════════════════════════ -->
+  <div class="error-banner" x-show="errorMessage" x-cloak>
+    <span class="error-banner-icon">⚠</span>
+    <span class="error-banner-text" x-text="errorMessage"></span>
+    <button class="error-dismiss" @click="dismissError()">Dismiss</button>
+  </div>
+
+  <!-- ═══ APP BODY ════════════════════════════════════════════════════════ -->
+  <div class="app-body">
+
+    <!-- ── LEFT: Session sidebar ──────────────────────────────────────── -->
+    <aside class="session-panel">
+      <div class="panel-heading">// Active Sessions</div>
+      <div class="session-list">
+
         <template x-for="s in sessions" :key="s.id">
-          <article class="session-card" @click="selectSession(s.id)"
-                   :class="{'selected': selected === s.id}">
-            <header>
+          <div class="session-item"
+               @click="selectSession(s.id)"
+               :class="{'is-selected': selected === s.id}">
+            <div class="session-item-header">
               <span class="status-dot" :class="s.active ? 'active' : 'inactive'"></span>
-              <strong x-text="s.hostname"></strong>
-            </header>
-            <p x-text="s.os + ' | ' + (s.ips || []).join(', ')"></p>
-            <footer>
-              <small x-text="s.tunnel_count + ' tunnels, ' + s.route_count + ' routes'"></small>
-            </footer>
-          </article>
+              <span class="session-os" x-text="osIcon(s.os)"></span>
+              <span class="session-hostname" x-text="s.hostname"></span>
+            </div>
+            <div class="session-ips" x-text="(s.ips || []).join(' · ')"></div>
+            <div class="session-meta">
+              <span class="session-stat">
+                <span class="session-stat-label">TUN </span><span class="session-stat-value" x-text="s.tunnel_count"></span>
+              </span>
+              <span class="session-stat">
+                <span class="session-stat-label">RTE </span><span class="session-stat-value" x-text="s.route_count"></span>
+              </span>
+              <span class="session-stat" x-text="timeAgo(s.created_at)"></span>
+            </div>
+            <div class="session-bytes">
+              <span class="bytes-in"  x-text="formatBytes(s.bytes_in)"></span>
+              <span class="bytes-out" x-text="formatBytes(s.bytes_out)"></span>
+            </div>
+          </div>
         </template>
-        <p x-show="sessions.length === 0">No sessions connected.</p>
+
+        <div class="session-empty" x-show="sessions.length === 0">
+          No sessions active
+        </div>
+
+      </div>
+    </aside>
+
+    <!-- ── RIGHT: Detail panel (session selected) ─────────────────────── -->
+    <div class="detail-panel" x-show="selected" x-cloak>
+
+      <!-- Session header -->
+      <div class="session-header">
+        <div class="session-title-row">
+          <span class="status-dot"
+                :class="selectedSessionData && selectedSessionData.active ? 'active' : 'inactive'"></span>
+          <span class="session-os-lg"
+                x-text="osIcon(selectedSessionData ? selectedSessionData.os : '')"></span>
+          <span class="session-title-hostname"
+                x-text="selectedSessionData ? selectedSessionData.hostname : ''"></span>
+        </div>
+        <div class="session-detail-grid">
+          <div class="detail-item">
+            <span class="detail-label">Session ID</span>
+            <div class="session-id-row">
+              <span class="detail-value"
+                    x-text="truncateId(selectedSessionData ? selectedSessionData.id : '')"></span>
+              <button class="copy-btn"
+                      @click="copyToClipboard(selectedSessionData ? selectedSessionData.id : '')"
+                      title="Copy full session ID">COPY</button>
+            </div>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">Operating System</span>
+            <span class="detail-value"
+                  x-text="selectedSessionData ? selectedSessionData.os : ''"></span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">IP Addresses</span>
+            <span class="detail-value"
+                  x-text="selectedSessionData ? (selectedSessionData.ips || []).join(', ') : ''"></span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">Connected</span>
+            <span class="detail-value"
+                  x-text="selectedSessionData ? timeAgo(selectedSessionData.created_at) : ''"></span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">Bytes In</span>
+            <span class="detail-value ok"
+                  x-text="selectedSessionData ? formatBytes(selectedSessionData.bytes_in) : ''"></span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">Bytes Out</span>
+            <span class="detail-value accent"
+                  x-text="selectedSessionData ? formatBytes(selectedSessionData.bytes_out) : ''"></span>
+          </div>
+        </div>
       </div>
 
-      <div x-show="selected">
-        <h2>Tunnels</h2>
-        <table>
+      <!-- ── Tunnels section ─────────────────────────────────────────── -->
+      <div class="section">
+        <div class="section-heading">
+          <span class="section-title">// Tunnels</span>
+          <span class="section-count" x-text="tunnels.length"></span>
+        </div>
+
+        <table class="data-table" x-show="tunnels.length > 0">
           <thead>
             <tr>
-              <th>Direction</th><th>Listen</th><th>Remote</th><th>Proto</th><th></th>
+              <th>Direction</th>
+              <th>Listen Addr</th>
+              <th>Remote Addr</th>
+              <th>Proto</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
             <template x-for="t in tunnels" :key="t.id">
               <tr>
-                <td x-text="t.direction"></td>
+                <td><span :class="directionBadgeClass(t.direction)" x-text="t.direction"></span></td>
                 <td x-text="t.listen_addr"></td>
                 <td x-text="t.remote_addr"></td>
-                <td x-text="t.protocol"></td>
-                <td><button class="outline secondary" @click="removeTunnel(t.id)">X</button></td>
+                <td><span :class="protoBadgeClass(t.protocol)" x-text="t.protocol"></span></td>
+                <td class="col-action">
+                  <button class="btn btn-danger"
+                          @click="removeTunnel(t.id)"
+                          title="Remove tunnel">🗑</button>
+                </td>
               </tr>
             </template>
           </tbody>
         </table>
+
+        <div class="table-empty" x-show="tunnels.length === 0">
+          No tunnels configured
+        </div>
+
+        <!-- Add tunnel form -->
         <form @submit.prevent="addTunnel()">
-          <div class="grid">
-            <select x-model="newTunnel.direction">
-              <option value="local">Local</option>
-              <option value="remote">Remote</option>
-              <option value="reverse">Reverse</option>
+          <div class="form-row">
+            <select x-model="newTunnel.direction" class="select-sm">
+              <option value="local">local</option>
+              <option value="remote">remote</option>
+              <option value="reverse">reverse</option>
             </select>
-            <input type="text" placeholder="Listen addr" x-model="newTunnel.listen">
-            <input type="text" placeholder="Remote addr" x-model="newTunnel.remote">
-            <select x-model="newTunnel.protocol">
-              <option value="tcp">TCP</option>
-              <option value="udp">UDP</option>
+            <input type="text" placeholder="0.0.0.0:8080" x-model="newTunnel.listen">
+            <input type="text" placeholder="10.0.0.1:80"  x-model="newTunnel.remote">
+            <select x-model="newTunnel.protocol" class="select-sm">
+              <option value="tcp">tcp</option>
+              <option value="udp">udp</option>
             </select>
-            <button type="submit">Add</button>
+            <button type="submit" class="btn btn-primary">+ ADD</button>
           </div>
         </form>
+      </div>
 
-        <h2>Routes</h2>
-        <table>
+      <!-- ── Routes section ─────────────────────────────────────────── -->
+      <div class="section">
+        <div class="section-heading">
+          <span class="section-title">// Routes</span>
+          <span class="section-count" x-text="routes.length"></span>
+        </div>
+
+        <table class="data-table" x-show="routes.length > 0">
           <thead>
-            <tr><th>CIDR</th><th></th></tr>
+            <tr>
+              <th>CIDR</th>
+              <th class="col-status">Status</th>
+              <th></th>
+            </tr>
           </thead>
           <tbody>
             <template x-for="rt in routes" :key="rt.cidr">
               <tr>
                 <td x-text="rt.cidr"></td>
-                <td><button class="outline secondary" @click="removeRoute(rt.cidr)">X</button></td>
+                <td>
+                  <span :class="rt.active ? 'badge badge-active' : 'badge badge-inactive'"
+                        x-text="rt.active ? 'ACTIVE' : 'INACTIVE'"></span>
+                </td>
+                <td class="col-action">
+                  <button class="btn btn-danger"
+                          @click="removeRoute(rt.cidr)"
+                          title="Remove route">🗑</button>
+                </td>
               </tr>
             </template>
           </tbody>
         </table>
+
+        <div class="table-empty" x-show="routes.length === 0">
+          No routes configured
+        </div>
+
+        <!-- Add route form -->
         <form @submit.prevent="addRoute()">
-          <div class="grid">
+          <div class="form-row">
             <input type="text" placeholder="10.0.0.0/24" x-model="newRoute.cidr">
-            <button type="submit">Add</button>
+            <button type="submit" class="btn btn-primary">+ ADD</button>
           </div>
         </form>
       </div>
+
+    </div><!-- /detail-panel -->
+
+    <!-- ── RIGHT: Empty state (no session selected) ───────────────────── -->
+    <div class="detail-panel detail-empty" x-show="!selected">
+      <div class="empty-glyph">◈</div>
+      <div class="empty-text">Select a session to begin</div>
     </div>
-  </main>
-  <script src="/static/app.js"></script>
+
+  </div><!-- /app-body -->
+
+</div><!-- /app-layout -->
+
+<script src="/static/app.js"></script>
 </body>
 </html>

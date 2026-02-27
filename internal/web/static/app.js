@@ -2,6 +2,7 @@ function dashboard() {
   return {
     sessions: [],
     selected: null,
+    selectedSessionData: null,
     tunnels: [],
     routes: [],
     token: null,
@@ -9,6 +10,63 @@ function dashboard() {
     newRoute: { cidr: '' },
     connected: false,
     errorMessage: '',
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    formatBytes(n) {
+      if (!n || n === 0) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), units.length - 1);
+      return (n / Math.pow(1024, i)).toFixed(1) + ' ' + units[i];
+    },
+
+    timeAgo(ts) {
+      if (!ts) return '—';
+      const diff = Date.now() - new Date(ts).getTime();
+      const secs = Math.floor(diff / 1000);
+      if (secs < 10) return 'just now';
+      if (secs < 60) return secs + 's ago';
+      const mins = Math.floor(secs / 60);
+      if (mins < 60) return mins + 'm ago';
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24) return hrs + 'h ago';
+      const days = Math.floor(hrs / 24);
+      return days + 'd ago';
+    },
+
+    osIcon(os) {
+      if (!os) return '◌';
+      const lower = os.toLowerCase();
+      if (lower.includes('linux')) return '🐧';
+      if (lower.includes('windows') || lower.includes('win')) return '🪟';
+      if (lower.includes('darwin') || lower.includes('mac')) return '🍎';
+      if (lower.includes('freebsd') || lower.includes('bsd')) return '👹';
+      if (lower.includes('android')) return '🤖';
+      return '◌';
+    },
+
+    directionBadgeClass(dir) {
+      const map = { local: 'badge badge-local', remote: 'badge badge-remote', reverse: 'badge badge-reverse' };
+      return map[dir] || 'badge badge-local';
+    },
+
+    protoBadgeClass(proto) {
+      const map = { tcp: 'badge badge-tcp', udp: 'badge badge-udp' };
+      return map[proto] || 'badge badge-tcp';
+    },
+
+    truncateId(id) {
+      if (!id) return '';
+      return id.length > 14 ? id.substring(0, 14) + '…' : id;
+    },
+
+    copyToClipboard(text) {
+      if (!text) return;
+      navigator.clipboard.writeText(text).catch(() => {});
+    },
+
+    // ── Init ─────────────────────────────────────────────────────────────────
+
     init() {
       const urlParams = new URLSearchParams(window.location.search);
       if (urlParams.has('token')) {
@@ -50,11 +108,16 @@ function dashboard() {
       return false;
     },
 
+    // ── API calls ─────────────────────────────────────────────────────────────
+
     async fetchSessions() {
       try {
         const res = await fetch('/api/sessions', { headers: this.authHeaders() });
         if (this.handleFetchError(res, 'Fetch sessions')) return;
         this.sessions = await res.json();
+        if (this.selected) {
+          this.selectedSessionData = this.sessions.find(s => s.id === this.selected) || null;
+        }
       } catch (e) {
         this.showError('Cannot reach server. If using HTTPS with a self-signed certificate, open the server URL directly in your browser and accept the certificate first.');
         console.error('fetch sessions:', e);
@@ -63,6 +126,7 @@ function dashboard() {
 
     async selectSession(id) {
       this.selected = id;
+      this.selectedSessionData = this.sessions.find(s => s.id === id) || null;
       try {
         const opts = { headers: this.authHeaders() };
         const [tRes, rRes] = await Promise.all([
@@ -102,6 +166,7 @@ function dashboard() {
         console.warn('SSE connection lost, will auto-reconnect');
       };
     },
+
     async addTunnel() {
       if (!this.selected) return;
       try {
@@ -125,6 +190,7 @@ function dashboard() {
         console.error('add tunnel:', e);
       }
     },
+
     async removeTunnel(id) {
       if (!this.selected) return;
       try {
@@ -139,6 +205,7 @@ function dashboard() {
         console.error('remove tunnel:', e);
       }
     },
+
     async addRoute() {
       if (!this.selected) return;
       try {
@@ -157,6 +224,7 @@ function dashboard() {
         console.error('add route:', e);
       }
     },
+
     async removeRoute(cidr) {
       if (!this.selected) return;
       try {
