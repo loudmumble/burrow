@@ -49,6 +49,9 @@ type SessionProvider interface {
 	RemoveTunnel(sessionID, tunnelID string) error
 	AddRoute(sessionID, cidr string) (RouteInfo, error)
 	RemoveRoute(sessionID, cidr string) error
+	StartTun(sessionID string) error
+	StopTun(sessionID string) error
+	IsTunActive(sessionID string) bool
 }
 
 // apiHandler holds references needed by all REST handlers.
@@ -118,7 +121,9 @@ func registerAPIRoutes(mux *http.ServeMux, provider SessionProvider, apiToken st
 	mux.HandleFunc("GET /api/sessions/{id}/routes", h.AuthMiddleware(http.HandlerFunc(h.getRoutes)))
 	mux.HandleFunc("POST /api/sessions/{id}/routes", h.AuthMiddleware(http.HandlerFunc(h.addRoute)))
 	mux.HandleFunc("DELETE /api/sessions/{id}/routes/{cidr}", h.AuthMiddleware(http.HandlerFunc(h.removeRoute)))
-}
+	mux.HandleFunc("POST /api/sessions/{id}/tun", h.AuthMiddleware(http.HandlerFunc(h.startTun)))
+	mux.HandleFunc("DELETE /api/sessions/{id}/tun", h.AuthMiddleware(http.HandlerFunc(h.stopTun)))
+	}
 
 func (h *apiHandler) listSessions(w http.ResponseWriter, r *http.Request) {
 	sessions := h.provider.ListSessions()
@@ -217,4 +222,26 @@ func (h *apiHandler) removeRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *apiHandler) startTun(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := h.provider.StartTun(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":    "active",
+		"interface": "burrow0",
+		"magic_ip":  "240.0.0.1",
+	})
+}
+
+func (h *apiHandler) stopTun(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := h.provider.StopTun(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
 }

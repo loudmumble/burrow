@@ -125,6 +125,10 @@ func (m *mockProvider) RemoveRoute(sessionID, cidr string) error {
 	return fmt.Errorf("route %s not found", cidr)
 }
 
+func (m *mockProvider) StartTun(sessionID string) error  { return nil }
+func (m *mockProvider) StopTun(sessionID string) error   { return nil }
+func (m *mockProvider) IsTunActive(sessionID string) bool { return false }
+
 type authTransport struct {
 	http.RoundTripper
 }
