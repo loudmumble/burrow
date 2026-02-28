@@ -917,7 +917,7 @@ func (m tuiModel) viewDetail(b *strings.Builder) {
 
 	b.WriteString("\n\n")
 	b.WriteString(tuiRenderHelpBar([]string{
-		"↑/k up", "↓/j down", "T toggle TUN", "t tunnel", "r route", "d delete", "^R refresh", "tab switch", "esc back",
+		"↑/k up", "↓/j down", "T toggle TUN", "a tunnel", "r route", "d delete", "^R refresh", "tab switch", "esc back",
 	}))
 }
 

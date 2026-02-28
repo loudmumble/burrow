@@ -532,9 +532,9 @@ func (m *Manager) StartTun(sessionID string) error {
 			iface.Close()
 			return fmt.Errorf("agent TUN start: %w", readyErr)
 		}
-	case <-time.After(10 * time.Second):
+	case <-time.After(20 * time.Second):
 		iface.Close()
-		return fmt.Errorf("TUN start timeout: agent did not respond in 10s")
+		return fmt.Errorf("TUN start timeout: agent did not respond in 20s")
 	}
 
 	// Store TUN state and start relay goroutines.
@@ -598,6 +598,7 @@ func (m *Manager) StopTun(sessionID string) error {
 		}
 		ac.tunActive = false
 		ac.mu.Unlock()
+		ac.tunReady = nil
 
 		// Send MsgTunStop to agent.
 		if ac.Ctrl != nil {
@@ -628,14 +629,8 @@ func (m *Manager) HandleTunAck(sessionID, errStr string) {
 		case ch <- fmt.Errorf("%s", errStr):
 		default:
 		}
-	} else {
-		// Signal success directly instead of relying solely on HandleDataStream,
-		// which can race if the data stream arrives before tunReady is stored.
-		select {
-		case ch <- nil:
-		default:
-		}
 	}
+	// Success ack is signaled by HandleDataStream when the data stream is ready.
 }
 // HandleDataStream stores the yamux data stream opened by the agent for TUN packets.
 func (m *Manager) HandleDataStream(sessionID string, stream net.Conn) {

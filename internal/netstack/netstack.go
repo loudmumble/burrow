@@ -223,8 +223,8 @@ func (s *Stack) ReadPacket(ctx context.Context) ([]byte, error) {
 // all relay goroutines to finish.
 func (s *Stack) Close() error {
 	s.cancel()
-	s.wg.Wait()
-	s.ep.Close()
+	s.ep.Close() // close channel endpoint first to unblock all gvisor reads/writes
+	s.wg.Wait()  // now safe — relay goroutines will exit on endpoint close
 	s.ns.Close()
 	return nil
 }

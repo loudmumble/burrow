@@ -15,8 +15,8 @@ import (
 // Default yamux configuration values.
 const (
 	defaultAcceptBacklog          = 256
-	defaultKeepAliveInterval      = 30 * time.Second
-	defaultConnectionWriteTimeout = 10 * time.Second
+	defaultKeepAliveInterval      = 60 * time.Second
+	defaultConnectionWriteTimeout = 60 * time.Second
 	defaultMaxStreamWindowSize    = 20 * 1024 * 1024 // 20MB — exceeds ligolo-ng (16MB) for max throughput
 )
 

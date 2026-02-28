@@ -229,6 +229,7 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 	var tunNS *netstack.Stack
 	var tunStream net.Conn
 	var tunCancel context.CancelFunc
+	var tunCloseDone chan struct{}
 
 	defer func() {
 		if tunCancel != nil {
@@ -389,6 +390,11 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 
 			case protocol.MsgTunStart:
 				fmt.Println("[*] TUN start requested by server")
+				// Wait for any previous netstack close to finish.
+				if tunCloseDone != nil {
+					<-tunCloseDone
+					tunCloseDone = nil
+				}
 				ns, nsErr := netstack.New(netstack.Opts{})
 				ackPayload := &protocol.TunStartAckPayload{}
 				if nsErr != nil {
@@ -424,9 +430,17 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 					tunStream.Close()
 					tunStream = nil
 				}
+				// Close netstack asynchronously — Close() blocks on wg.Wait()
+				// for active TCP connections. Don't block the command loop.
 				if tunNS != nil {
-					tunNS.Close()
+					ns := tunNS
 					tunNS = nil
+					done := make(chan struct{})
+					go func() {
+						ns.Close()
+						close(done)
+					}()
+					tunCloseDone = done
 				}
 				fmt.Println("[*] TUN mode stopped")
 
