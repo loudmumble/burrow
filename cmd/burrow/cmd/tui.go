@@ -472,7 +472,7 @@ func (m tuiModel) handleSessionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.errExpiry = time.Time{}
 			return m, m.refreshDetail()
 		}
-	case "t", "T":
+	case "ctrl+t":
 		if len(m.sessions) > 0 && m.cursor < len(m.sessions) {
 			s := m.sessions[m.cursor]
 			action := "Starting"
@@ -534,7 +534,7 @@ func (m tuiModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.errExpiry = time.Time{}
 	case "d", "delete":
 		return m.handleDelete()
-	case "T":
+	case "ctrl+t":
 		if m.selected != "" {
 			var active bool
 			for _, s := range m.sessions {
@@ -818,7 +818,7 @@ func (m tuiModel) viewSessions(b *strings.Builder) {
 
 	b.WriteString("\n\n")
 	b.WriteString(tuiRenderHelpBar([]string{
-		"↑/k up", "↓/j down", "enter select", "T toggle TUN", "^R refresh", "q quit",
+		"↑/k up", "↓/j down", "enter select", "^T toggle TUN", "^R refresh", "q quit",
 	}))
 }
 
@@ -917,7 +917,7 @@ func (m tuiModel) viewDetail(b *strings.Builder) {
 
 	b.WriteString("\n\n")
 	b.WriteString(tuiRenderHelpBar([]string{
-		"↑/k up", "↓/j down", "T toggle TUN", "a tunnel", "r route", "d delete", "^R refresh", "tab switch", "esc back",
+		"↑/k up", "↓/j down", "^T toggle TUN", "t tunnel", "r route", "d delete", "^R refresh", "tab switch", "esc back",
 	}))
 }
 
