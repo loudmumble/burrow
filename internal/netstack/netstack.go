@@ -37,7 +37,7 @@ const (
 	nicID tcpip.NICID = 1
 
 	// channelSize is the outbound packet queue depth for the channel endpoint.
-	channelSize = 512
+	channelSize = 2048
 
 	// tcpDialTimeout is how long to wait when dialing a real TCP connection.
 	tcpDialTimeout = 5 * time.Second
@@ -257,6 +257,11 @@ func (s *Stack) handleTCP(req *tcp.ForwarderRequest) {
 		s.logger.Printf("netstack: tcp: dial %s: %v", dst, err)
 		return
 	}
+	if tc, ok := remote.(*net.TCPConn); ok {
+		_ = tc.SetNoDelay(true)
+		_ = tc.SetReadBuffer(4 * 1024 * 1024)
+		_ = tc.SetWriteBuffer(4 * 1024 * 1024)
+	}
 
 	s.logger.Printf("netstack: tcp: %s:%d -> %s",
 		id.RemoteAddress, id.RemotePort, dst)
@@ -309,6 +314,17 @@ func (s *Stack) handleUDP(req *udp.ForwarderRequest) {
 	}()
 }
 
+// relayBufSize is the buffer size for bidirectional relay (256KB for throughput).
+const relayBufSize = 256 * 1024
+
+// relayBufPool pools relay buffers to avoid per-connection allocations.
+var relayBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, relayBufSize)
+		return &b
+	},
+}
+
 // relay copies data bidirectionally between two connections. Both connections
 // are closed when relay returns.
 func relay(a, b net.Conn) {
@@ -317,10 +333,14 @@ func relay(a, b net.Conn) {
 
 	done := make(chan struct{})
 	go func() {
-		io.Copy(b, a)
+		bp := relayBufPool.Get().(*[]byte)
+		io.CopyBuffer(b, a, *bp)
+		relayBufPool.Put(bp)
 		close(done)
 	}()
-	io.Copy(a, b)
+	bp := relayBufPool.Get().(*[]byte)
+	io.CopyBuffer(a, b, *bp)
+	relayBufPool.Put(bp)
 	<-done
 }
 

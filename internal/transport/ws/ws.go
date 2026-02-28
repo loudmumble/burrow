@@ -58,6 +58,7 @@ func (t *WSTransport) Listen(ctx context.Context, addr string, tlsCfg *tls.Confi
 	if err != nil {
 		return fmt.Errorf("ws transport listen: %w", err)
 	}
+	ln = transport.WrapListener(ln)
 
 	t.mu.Lock()
 	t.listener = ln

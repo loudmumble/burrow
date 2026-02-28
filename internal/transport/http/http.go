@@ -378,6 +378,7 @@ func (t *HTTPTransport) Listen(ctx context.Context, addr string, tlsCfg *tls.Con
 	if err != nil {
 		return fmt.Errorf("http transport listen: %w", err)
 	}
+	ln = transport.WrapListener(ln)
 
 	t.mu.Lock()
 	t.listener = ln

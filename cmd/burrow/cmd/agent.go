@@ -498,6 +498,7 @@ func tunAgentRelay(ctx context.Context, stream net.Conn, ns *netstack.Stack) {
 				return
 			}
 			ns.InjectPacket(pkt)
+			protocol.PutPacketBuf(pkt)
 		}
 	}()
 	// netstack → stream (read response packets from gvisor, send to server)

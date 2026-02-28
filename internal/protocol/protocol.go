@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 )
 
 // MaxPayloadSize is the maximum allowed payload size (1 MB).
@@ -459,22 +460,54 @@ func EncodeTunStop() *Message {
 	return &Message{Type: MsgTunStop}
 }
 
+// packetBufPool pools byte slices for raw packet I/O to reduce GC pressure.
+// Buffers are MTU-sized (1500) + headroom; larger packets get fresh allocations.
+var packetBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 0, 1600)
+		return &b
+	},
+}
+
+// GetPacketBuf returns a pooled byte slice. Caller must call PutPacketBuf when done.
+func GetPacketBuf(size int) []byte {
+	bp := packetBufPool.Get().(*[]byte)
+	b := *bp
+	if cap(b) >= size {
+		return b[:size]
+	}
+	// Too small — discard and allocate fresh.
+	return make([]byte, size)
+}
+
+// PutPacketBuf returns a byte slice to the pool.
+func PutPacketBuf(b []byte) {
+	if cap(b) < 1600 {
+		return // too small to pool, let GC handle it
+	}
+	b = b[:0]
+	packetBufPool.Put(&b)
+}
+
 // WriteRawPacket writes a length-prefixed raw IP packet to w.
 // Frame format: [length:4 big-endian][data:length]
+// The header and data are coalesced into a single write to reduce syscalls.
 func WriteRawPacket(w io.Writer, data []byte) error {
-	var hdr [4]byte
-	binary.BigEndian.PutUint32(hdr[:], uint32(len(data)))
-	if _, err := w.Write(hdr[:]); err != nil {
-		return fmt.Errorf("write raw packet header: %w", err)
-	}
-	if _, err := w.Write(data); err != nil {
-		return fmt.Errorf("write raw packet data: %w", err)
+	// Coalesce header + data into a single write.
+	total := 4 + len(data)
+	buf := GetPacketBuf(total)
+	binary.BigEndian.PutUint32(buf[:4], uint32(len(data)))
+	copy(buf[4:], data)
+	_, err := w.Write(buf[:total])
+	PutPacketBuf(buf)
+	if err != nil {
+		return fmt.Errorf("write raw packet: %w", err)
 	}
 	return nil
 }
 
 // ReadRawPacket reads a length-prefixed raw IP packet from r.
-// Returns the packet data or an error.
+// Returns a pooled buffer — caller MUST call PutPacketBuf when done.
 func ReadRawPacket(r io.Reader) ([]byte, error) {
 	var hdr [4]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
@@ -484,8 +517,9 @@ func ReadRawPacket(r io.Reader) ([]byte, error) {
 	if length > MaxPayloadSize {
 		return nil, ErrPayloadTooLarge
 	}
-	buf := make([]byte, length)
+	buf := GetPacketBuf(int(length))
 	if _, err := io.ReadFull(r, buf); err != nil {
+		PutPacketBuf(buf)
 		return nil, fmt.Errorf("read raw packet data: %w", err)
 	}
 	return buf, nil

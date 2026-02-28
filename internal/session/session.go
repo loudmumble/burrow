@@ -651,11 +651,13 @@ func (m *Manager) IsTunActive(sessionID string) bool {
 // tunRelayToStream reads packets from the TUN interface and writes them to the data stream.
 func (m *Manager) tunRelayToStream(ctx context.Context, iface *tun.Interface, ac *AgentConn) {
 	buf := make([]byte, tun.DefaultMTU+64)
+	// Cache stream reference — only recheck on nil (avoids per-packet mutex).
+	ac.mu.RLock()
+	stream := ac.tunStream
+	ac.mu.RUnlock()
 	for {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return
-		default:
 		}
 		n, err := iface.Read(buf)
 		if err != nil {
@@ -664,11 +666,13 @@ func (m *Manager) tunRelayToStream(ctx context.Context, iface *tun.Interface, ac
 			}
 			return
 		}
-		ac.mu.RLock()
-		stream := ac.tunStream
-		ac.mu.RUnlock()
 		if stream == nil {
-			continue
+			ac.mu.RLock()
+			stream = ac.tunStream
+			ac.mu.RUnlock()
+			if stream == nil {
+				continue
+			}
 		}
 		if err := protocol.WriteRawPacket(stream, buf[:n]); err != nil {
 			if ctx.Err() == nil {
@@ -704,11 +708,13 @@ func (m *Manager) tunRelayFromStream(ctx context.Context, iface *tun.Interface, 
 			return
 		}
 		if _, err := iface.Write(pkt); err != nil {
+			protocol.PutPacketBuf(pkt)
 			if ctx.Err() == nil {
 				fmt.Fprintf(os.Stderr, "[!] TUN write-to-iface error: %v\n", err)
 				go m.StopTun(ac.Info.ID)
 			}
 			return
 		}
+		protocol.PutPacketBuf(pkt)
 	}
 }

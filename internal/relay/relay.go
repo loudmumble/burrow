@@ -93,6 +93,17 @@ func normalizeListenAddr(arg string) string {
 	return "0.0.0.0:" + arg
 }
 
+// relayBufSize is the buffer size for bidirectional relay (256KB for throughput).
+const relayBufSize = 256 * 1024
+
+// relayBufPool pools relay buffers to avoid per-connection allocations.
+var relayBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, relayBufSize)
+		return &b
+	},
+}
+
 // Relay performs bidirectional copy between two ReadWriteClosers.
 // Returns when either direction encounters an error or EOF.
 func Relay(ctx context.Context, a, b io.ReadWriteCloser) error {
@@ -109,14 +120,18 @@ func Relay(ctx context.Context, a, b io.ReadWriteCloser) error {
 
 	go func() {
 		defer func() { done <- struct{}{} }()
-		_, err := io.Copy(a, b)
+		bp := relayBufPool.Get().(*[]byte)
+		_, err := io.CopyBuffer(a, b, *bp)
+		relayBufPool.Put(bp)
 		setErr(err)
 		cancel()
 	}()
 
 	go func() {
 		defer func() { done <- struct{}{} }()
-		_, err := io.Copy(b, a)
+		bp := relayBufPool.Get().(*[]byte)
+		_, err := io.CopyBuffer(b, a, *bp)
+		relayBufPool.Put(bp)
 		setErr(err)
 		cancel()
 	}()

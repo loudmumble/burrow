@@ -79,6 +79,7 @@ func (t *RawTransport) Accept() (net.Conn, error) {
 			return nil, fmt.Errorf("raw transport accept: %w", err)
 		}
 	}
+	transport.TuneConn(conn)
 	return conn, nil
 }
 
@@ -87,9 +88,19 @@ func (t *RawTransport) Accept() (net.Conn, error) {
 func (t *RawTransport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (net.Conn, error) {
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	if tlsCfg != nil {
-		return tls.DialWithDialer(dialer, "tcp", addr, tlsCfg)
+		c, err := tls.DialWithDialer(dialer, "tcp", addr, tlsCfg)
+		if err != nil {
+			return nil, err
+		}
+		transport.TuneConn(c)
+		return c, nil
 	}
-	return dialer.DialContext(ctx, "tcp", addr)
+	c, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	transport.TuneConn(c)
+	return c, nil
 }
 
 // Close shuts down the listener. Safe to call multiple times.

@@ -48,3 +48,43 @@ func Backoff(base time.Duration, attempt int) time.Duration {
 	jitter := delay * 0.1 * (rand.Float64()*2 - 1)
 	return time.Duration(delay + jitter)
 }
+
+// TuneConn applies TCP_NODELAY and enlarged socket buffers (4 MiB each) to
+// any net.Conn that wraps a *net.TCPConn. It handles both *net.TCPConn
+// directly and *tls.Conn (which exposes the underlying conn via NetConn()).
+// Errors are silently ignored — tuning is best-effort.
+func TuneConn(c net.Conn) {
+	var tc *net.TCPConn
+	switch v := c.(type) {
+	case *net.TCPConn:
+		tc = v
+	case *tls.Conn:
+		if raw, ok := v.NetConn().(*net.TCPConn); ok {
+			tc = raw
+		}
+	}
+	if tc == nil {
+		return
+	}
+	_ = tc.SetNoDelay(true)
+	_ = tc.SetReadBuffer(4 * 1024 * 1024)
+	_ = tc.SetWriteBuffer(4 * 1024 * 1024)
+}
+
+// tunedListener wraps a net.Listener and calls TuneConn on every accepted conn.
+type tunedListener struct{ net.Listener }
+
+func (l tunedListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	TuneConn(c)
+	return c, nil
+}
+
+// WrapListener returns a net.Listener that automatically tunes every accepted
+// TCP connection with TCP_NODELAY and 4 MiB socket buffers.
+func WrapListener(ln net.Listener) net.Listener {
+	return tunedListener{ln}
+}
