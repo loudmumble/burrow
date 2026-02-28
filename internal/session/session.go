@@ -18,6 +18,7 @@ import (
 
 	"github.com/loudmumble/burrow/internal/mux"
 	"github.com/loudmumble/burrow/internal/protocol"
+	"github.com/loudmumble/burrow/internal/proxy"
 	"github.com/loudmumble/burrow/internal/tun"
 	"github.com/loudmumble/burrow/internal/web"
 )
@@ -50,6 +51,9 @@ type AgentConn struct {
 	tunStream net.Conn    // yamux data stream for TUN packets
 	tunActive bool
 	tunReady  chan error  // signaled when data stream is ready
+
+	socksServer *proxy.SOCKS5
+	socksCancel context.CancelFunc
 }
 
 // Manager tracks all active agent sessions.
@@ -227,6 +231,10 @@ func (m *Manager) ListSessions() []web.SessionInfo {
 	result := make([]web.SessionInfo, 0, len(m.sessions))
 	for _, ac := range m.sessions {
 		s := ac.Info
+		socksAddr := ""
+		if ac.socksServer != nil {
+			socksAddr = ac.socksServer.Addr()
+		}
 		result = append(result, web.SessionInfo{
 			ID:        s.ID,
 			Hostname:  s.Hostname,
@@ -237,6 +245,7 @@ func (m *Manager) ListSessions() []web.SessionInfo {
 			TunActive: m.tunSession == s.ID && m.tunIface != nil,
 			BytesIn:   ac.bytesIn.Load(),
 			BytesOut:  ac.bytesOut.Load(),
+			SocksAddr: socksAddr,
 		})
 	}
 	return result
@@ -251,6 +260,10 @@ func (m *Manager) GetSession(id string) (web.SessionInfo, bool) {
 		return web.SessionInfo{}, false
 	}
 	s := ac.Info
+	socksAddr := ""
+	if ac.socksServer != nil {
+		socksAddr = ac.socksServer.Addr()
+	}
 	return web.SessionInfo{
 		ID:        s.ID,
 		Hostname:  s.Hostname,
@@ -261,6 +274,7 @@ func (m *Manager) GetSession(id string) (web.SessionInfo, bool) {
 		TunActive: m.tunSession == s.ID && m.tunIface != nil,
 		BytesIn:   ac.bytesIn.Load(),
 		BytesOut:  ac.bytesOut.Load(),
+		SocksAddr: socksAddr,
 	}, true
 }
 
@@ -829,6 +843,97 @@ func (m *Manager) IsTunActive(sessionID string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.tunSession == sessionID && m.tunIface != nil
+}
+
+// --- SOCKS5 proxy methods ---
+
+// StartSOCKS5 starts a SOCKS5 proxy on the operator's machine that routes
+// connections through the given session's yamux mux to the remote agent.
+func (m *Manager) StartSOCKS5(sessionID, listenAddr string) error {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+	if ac.Mux == nil {
+		return fmt.Errorf("session %s has no mux session", sessionID)
+	}
+
+	ac.mu.Lock()
+	if ac.socksServer != nil {
+		ac.mu.Unlock()
+		return fmt.Errorf("SOCKS5 already active on session %s", sessionID)
+	}
+	ac.mu.Unlock()
+
+	cfg := proxy.DefaultConfig()
+	cfg.ListenAddr = listenAddr
+	cfg.Dialer = proxy.NewSessionDialer(ac.Mux)
+
+	srv := proxy.NewSOCKS5WithConfig(cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		if err := srv.StartWithContext(ctx); err != nil {
+			if ctx.Err() == nil {
+				fmt.Fprintf(os.Stderr, "[!] SOCKS5 error on session %s: %v\n", sessionID, err)
+			}
+		}
+	}()
+
+	ac.mu.Lock()
+	ac.socksServer = srv
+	ac.socksCancel = cancel
+	ac.mu.Unlock()
+
+	return nil
+}
+
+// StopSOCKS5 stops the SOCKS5 proxy on the given session.
+func (m *Manager) StopSOCKS5(sessionID string) error {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+
+	ac.mu.Lock()
+	srv := ac.socksServer
+	cancel := ac.socksCancel
+	ac.socksServer = nil
+	ac.socksCancel = nil
+	ac.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if srv != nil {
+		srv.Stop()
+	}
+	return nil
+}
+
+// IsSOCKS5Active returns whether SOCKS5 is active on the given session.
+func (m *Manager) IsSOCKS5Active(sessionID string) bool {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return false
+	}
+	ac.mu.RLock()
+	defer ac.mu.RUnlock()
+	return ac.socksServer != nil
+}
+
+// SOCKS5Addr returns the SOCKS5 listener address, or empty string if not active.
+func (m *Manager) SOCKS5Addr(sessionID string) string {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return ""
+	}
+	ac.mu.RLock()
+	defer ac.mu.RUnlock()
+	if ac.socksServer != nil {
+		return ac.socksServer.Addr()
+	}
+	return ""
 }
 
 // tunRelayToStream reads packets from the TUN interface and writes them to the data stream.

@@ -189,12 +189,7 @@ func runServer(cmd *cobra.Command, _ []string) {
 
 	if tuiEnabled {
 		time.Sleep(200 * time.Millisecond)
-		apiURL := fmt.Sprintf("%s://%s", scheme, webAddr)
-		var webuiURL string
-		if webuiEnabled {
-			webuiURL = fmt.Sprintf("%s://%s/", scheme, webuiAddr)
-		}
-		if err := RunTUI(apiURL, webuiURL); err != nil {
+		if err := RunTUI(mgr); err != nil {
 			fmt.Fprintf(os.Stderr, "[!] TUI error: %v\n", err)
 		}
 		fmt.Println("\n[*] TUI exited, shutting down...")
@@ -291,7 +286,7 @@ func handleAgentConn(conn net.Conn, mgr *session.Manager) {
 func serverCommandLoop(ctrl net.Conn, mgr *session.Manager, sessionID string) error {
 	const pingInterval = 30 * time.Second
 
-	msgCh := make(chan *protocol.Message, 4)
+	msgCh := make(chan *protocol.Message, 32)
 	errCh := make(chan error, 1)
 
 	go func() {
@@ -441,6 +436,9 @@ func handleRemoteTunnelStream(stream net.Conn) {
 	done := make(chan struct{}, 2)
 	go func() {
 		relay.CopyBuffered(conn, stream)
+		if tc, ok := conn.(*net.TCPConn); ok {
+			tc.CloseWrite()
+		}
 		done <- struct{}{}
 	}()
 	go func() {
@@ -448,4 +446,5 @@ func handleRemoteTunnelStream(stream net.Conn) {
 		done <- struct{}{}
 	}()
 	<-done
+	<-done // Wait for both goroutines to finish
 }

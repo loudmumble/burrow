@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
@@ -218,6 +219,9 @@ func agentSession(ctx context.Context, conn net.Conn) error {
 	}
 	fmt.Printf("[*] Session ID: %s (server %s)\n", ack.SessionID, ack.ProxyVersion)
 
+	// Start proxy stream acceptor for SOCKS5 routing.
+	go acceptProxyStreams(ctx, sess)
+
 	return commandLoop(ctx, ctrl, sess)
 }
 
@@ -249,7 +253,7 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 		}
 	}()
 
-	msgCh := make(chan *protocol.Message, 4)
+	msgCh := make(chan *protocol.Message, 32)
 	errCh := make(chan error, 1)
 
 	go func() {
@@ -480,13 +484,20 @@ func acceptAndRelay(ctx context.Context, ln net.Listener, forwardAddr string) {
 			done := make(chan struct{}, 2)
 			go func() {
 				relay.CopyBuffered(remote, c)
+				if tc, ok := remote.(*net.TCPConn); ok {
+					tc.CloseWrite()
+				}
 				done <- struct{}{}
 			}()
 			go func() {
 				relay.CopyBuffered(c, remote)
+				if tc, ok := c.(*net.TCPConn); ok {
+					tc.CloseWrite()
+				}
 				done <- struct{}{}
 			}()
 			<-done
+			<-done // Wait for both goroutines
 		}(conn)
 	}
 }
@@ -589,7 +600,68 @@ func remoteTunnelRelay(conn net.Conn, sess *mux.Session, remoteAddr string) {
 	}()
 	go func() {
 		relay.CopyBuffered(conn, stream)
+		if tc, ok := conn.(*net.TCPConn); ok {
+			tc.CloseWrite()
+		}
 		done <- struct{}{}
 	}()
+	<-done
+	<-done // Wait for both goroutines
+}
+
+// acceptProxyStreams accepts server-initiated yamux streams for SOCKS5 proxy
+// routing. Each stream carries a [2-byte addr len][addr] header followed by
+// bidirectional TCP relay to the target.
+func acceptProxyStreams(ctx context.Context, sess *mux.Session) {
+	for {
+		stream, err := sess.Accept()
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			return
+		}
+		go handleProxyStream(ctx, stream)
+	}
+}
+
+func handleProxyStream(_ context.Context, stream net.Conn) {
+	defer stream.Close()
+
+	// Read [2-byte addr len][addr bytes]
+	lenBuf := make([]byte, 2)
+	if _, err := io.ReadFull(stream, lenBuf); err != nil {
+		return
+	}
+	addrLen := binary.BigEndian.Uint16(lenBuf)
+	if addrLen == 0 || addrLen > 512 {
+		return
+	}
+	addrBuf := make([]byte, addrLen)
+	if _, err := io.ReadFull(stream, addrBuf); err != nil {
+		return
+	}
+	target := string(addrBuf)
+
+	conn, err := net.DialTimeout("tcp", target, 10*time.Second)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	relay.TuneConn(conn)
+
+	done := make(chan struct{}, 2)
+	go func() {
+		relay.CopyBuffered(conn, stream)
+		if tc, ok := conn.(*net.TCPConn); ok {
+			tc.CloseWrite()
+		}
+		done <- struct{}{}
+	}()
+	go func() {
+		relay.CopyBuffered(stream, conn)
+		done <- struct{}{}
+	}()
+	<-done
 	<-done
 }

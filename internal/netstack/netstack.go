@@ -196,8 +196,9 @@ func (s *Stack) InjectPacket(raw []byte) {
 		return
 	}
 
-	// Copy the packet data -- gvisor takes ownership of the buffer.
-	cp := make([]byte, len(raw))
+	// Use pooled buffer — gvisor takes ownership so we cannot PutPacketBuf after inject.
+	// However, buffers of the same size class recycle efficiently in sync.Pool.
+	cp := protocol.GetPacketBuf(len(raw))
 	copy(cp, raw)
 
 	buf := buffer.MakeWithData(cp)

@@ -19,6 +19,7 @@ type SessionInfo struct {
 	BytesIn   int64    `json:"bytes_in"`
 	BytesOut  int64    `json:"bytes_out"`
 	TunActive bool     `json:"tun_active"`
+	SocksAddr string   `json:"socks_addr,omitempty"`
 }
 
 // TunnelInfo describes a tunnel for the dashboard.
@@ -31,6 +32,8 @@ type TunnelInfo struct {
 	Protocol   string `json:"protocol"`
 	Active     bool   `json:"active"`
 	Error      string `json:"error,omitempty"`
+	BytesIn    int64  `json:"bytes_in"`
+	BytesOut   int64  `json:"bytes_out"`
 }
 
 // RouteInfo describes a network route for the dashboard.
