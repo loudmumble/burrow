@@ -568,6 +568,7 @@ func (m tuiModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		m.errExpiry = time.Time{}
 	case "d", "delete":
+		return m.handleDelete()
 	case "u":
 		if m.detailTab == tuiTabTunnels && m.cursor < len(m.tunnels) {
 			t := m.tunnels[m.cursor]
@@ -586,7 +587,6 @@ func (m tuiModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.statusMsg = "Tunnel already stopped"
 		}
-		return m.handleDelete()
 	case "ctrl+t":
 		if m.selected != "" {
 			var active bool
