@@ -980,7 +980,7 @@ func (m tuiModel) viewTunnels(b *strings.Builder) {
 		return
 	}
 
-	hdr := fmt.Sprintf("  %-18s %-8s %-22s %-22s %-6s %-7s",
+	hdr := fmt.Sprintf("  %-16s  %-7s  %-24s  %-24s  %-5s  %-7s",
 		"ID", "DIR", "LISTEN", "REMOTE", "PROTO", "STATUS")
 	b.WriteString(tuiHeaderStyle.Render(hdr) + "\n")
 
@@ -994,11 +994,11 @@ func (m tuiModel) viewTunnels(b *strings.Builder) {
 			statusStr = tuiStatusInactiveStyle.Render("dead  ")
 		}
 
-		cols := fmt.Sprintf("%-18s %-8s %-22s %-22s %-6s",
+		cols := fmt.Sprintf("%-16s  %-7s  %-24s  %-24s  %-5s",
 			tuiTruncate(t.ID, 16),
 			t.Direction,
-			tuiTruncate(t.ListenAddr, 20),
-			tuiTruncate(t.RemoteAddr, 20),
+			tuiTruncate(t.ListenAddr, 24),
+			tuiTruncate(t.RemoteAddr, 24),
 			t.Protocol)
 
 		errSuffix := ""
