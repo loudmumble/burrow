@@ -38,7 +38,7 @@ const (
 	nicID tcpip.NICID = 1
 
 	// channelSize is the outbound packet queue depth for the channel endpoint.
-	channelSize = 2048
+	channelSize = 4096
 
 	// tcpDialTimeout is how long to wait when dialing a real TCP connection.
 	tcpDialTimeout = 15 * time.Second
@@ -165,6 +165,15 @@ func New(opts Opts) (*Stack, error) {
 	}
 	ns.SetTransportProtocolOption(tcp.ProtocolNumber, &rcvBufOpt)
 
+	// Aggressive TIME_WAIT: 5s instead of 60s default.
+	// Frees gvisor endpoints quickly after sessions close.
+	timeWaitOpt := tcpip.TCPTimeWaitTimeoutOption(5 * time.Second)
+	ns.SetTransportProtocolOption(tcp.ProtocolNumber, &timeWaitOpt)
+
+	// Allow new connections to reuse ports in TIME_WAIT state.
+	timeWaitReuse := tcpip.TCPTimeWaitReuseGlobal
+	ns.SetTransportProtocolOption(tcp.ProtocolNumber, &timeWaitReuse)
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &Stack{
@@ -288,6 +297,10 @@ func (s *Stack) handleTCP(req *tcp.ForwarderRequest) {
 	// ~200ms each, killing RDP activation (50KB = ~34 segments × 200ms > 16s timeout).
 	// relay.TuneConn only handles *net.TCPConn; this is a gonet.TCPConn.
 	ep.SocketOptions().SetDelayOption(false)
+	kaIdle := tcpip.KeepaliveIdleOption(30 * time.Second)
+	ep.SetSockOpt(&kaIdle)
+	kaInterval := tcpip.KeepaliveIntervalOption(10 * time.Second)
+	ep.SetSockOpt(&kaInterval)
 
 	netstackConn := gonet.NewTCPConn(&wq, ep)
 

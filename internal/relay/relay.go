@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Endpoint represents one side of a bidirectional relay.
@@ -122,13 +123,15 @@ func CopyBuffered(dst io.Writer, src io.Reader) (int64, error) {
 }
 
 // TuneConn applies TCP performance tuning to a connection:
-// TCP_NODELAY (disable Nagle), 4MB socket buffers (SO_RCVBUF/SO_SNDBUF).
+// TCP_NODELAY (disable Nagle), 4MB socket buffers, keepalive.
 // Silently no-ops for non-TCP connections (yamux streams, unix sockets).
 func TuneConn(c net.Conn) {
 	if tc, ok := c.(*net.TCPConn); ok {
 		_ = tc.SetNoDelay(true)
 		_ = tc.SetReadBuffer(4 * 1024 * 1024)
 		_ = tc.SetWriteBuffer(4 * 1024 * 1024)
+		_ = tc.SetKeepAlive(true)
+		_ = tc.SetKeepAlivePeriod(30 * time.Second)
 	}
 }
 
