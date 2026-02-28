@@ -863,14 +863,16 @@ func (m *Manager) StartSOCKS5(sessionID, listenAddr string) error {
 		ac.mu.Unlock()
 		return fmt.Errorf("SOCKS5 already active on session %s", sessionID)
 	}
-	ac.mu.Unlock()
-
 	cfg := proxy.DefaultConfig()
 	cfg.ListenAddr = listenAddr
 	cfg.Dialer = proxy.NewSessionDialer(ac.Mux)
 
 	srv := proxy.NewSOCKS5WithConfig(cfg)
 	ctx, cancel := context.WithCancel(context.Background())
+
+	ac.socksServer = srv
+	ac.socksCancel = cancel
+	ac.mu.Unlock()
 
 	go func() {
 		if err := srv.StartWithContext(ctx); err != nil {
@@ -879,11 +881,6 @@ func (m *Manager) StartSOCKS5(sessionID, listenAddr string) error {
 			}
 		}
 	}()
-
-	ac.mu.Lock()
-	ac.socksServer = srv
-	ac.socksCancel = cancel
-	ac.mu.Unlock()
 
 	return nil
 }
