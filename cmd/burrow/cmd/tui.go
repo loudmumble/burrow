@@ -363,7 +363,7 @@ func (m tuiModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.view = tuiViewAddTunnel
 		m.inputFields = []string{"Direction", "Listen Address", "Remote Address", "Protocol"}
 		m.inputValues = []string{"local", "", "", "tcp"}
-		m.inputCursor = 1
+		m.inputCursor = 0
 		m.statusMsg = ""
 		m.err = nil
 		m.errExpiry = time.Time{}
