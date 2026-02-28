@@ -266,6 +266,19 @@ func handleAgentConn(conn net.Conn, mgr *session.Manager) {
 
 	go acceptDataStreams(sess, mgr, sessionID)
 
+	// Auto-restore TUN if previous session for this agent had it active.
+	if mgr.WasTunActive(handshake.Hostname) {
+		mgr.ClearTunPrev()
+		go func() {
+			time.Sleep(500 * time.Millisecond) // let data stream acceptor start
+			if err := mgr.StartTun(sessionID); err != nil {
+				fmt.Fprintf(os.Stderr, "[!] TUN auto-restore failed for %s: %v\n", sessionID, err)
+			} else {
+				fmt.Printf("[*] TUN auto-restored for reconnected agent %s\n", handshake.Hostname)
+			}
+		}()
+	}
+
 	fmt.Printf("[*] Agent registered: session=%s host=%s os=%s ips=%v\n",
 		sessionID, handshake.Hostname, handshake.OS, handshake.IPs)
 	if err := serverCommandLoop(ctrl, mgr, sessionID); err != nil {

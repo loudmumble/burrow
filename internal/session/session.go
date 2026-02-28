@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/loudmumble/burrow/internal/mux"
@@ -43,6 +44,9 @@ type AgentConn struct {
 	mu      sync.RWMutex
 	writeMu sync.Mutex
 
+	bytesIn  atomic.Int64
+	bytesOut atomic.Int64
+
 	tunStream net.Conn    // yamux data stream for TUN packets
 	tunActive bool
 	tunReady  chan error  // signaled when data stream is ready
@@ -55,6 +59,8 @@ type Manager struct {
 	tunIface   *tun.Interface
 	tunSession string           // which session owns TUN
 	tunCancel  context.CancelFunc
+	tunPrevHostname string
+	tunPrevRoutes   []string
 }
 
 // NewManager creates a new session manager.
@@ -121,17 +127,47 @@ func (m *Manager) AddConn(info *Info, muxSess *mux.Session, ctrl net.Conn) {
 
 // Remove deletes a session by ID. If TUN is active on this session, it is stopped first.
 func (m *Manager) Remove(id string) {
-	// If this session owns TUN, stop it before removing.
+	// If this session owns TUN, save state for auto-restore and stop it.
 	m.mu.RLock()
 	ownsTun := m.tunSession == id && m.tunIface != nil
+	ac := m.sessions[id]
 	m.mu.RUnlock()
-	if ownsTun {
+	if ownsTun && ac != nil {
+		// Save hostname and routes for TUN auto-restore on reconnect.
+		ac.mu.RLock()
+		prevRoutes := make([]string, 0, len(ac.routes))
+		for cidr := range ac.routes {
+			prevRoutes = append(prevRoutes, cidr)
+		}
+		ac.mu.RUnlock()
+		m.mu.Lock()
+		m.tunPrevHostname = ac.Info.Hostname
+		m.tunPrevRoutes = prevRoutes
+		m.mu.Unlock()
 		_ = m.StopTun(id) // best-effort cleanup
+	} else if ownsTun {
+		_ = m.StopTun(id)
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.sessions, id)
+}
+
+// WasTunActive returns whether TUN was active for the given hostname
+// before its session was removed.
+func (m *Manager) WasTunActive(hostname string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.tunPrevHostname == hostname
+}
+
+// ClearTunPrev clears the saved TUN auto-restore state.
+func (m *Manager) ClearTunPrev() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.tunPrevHostname = ""
+	m.tunPrevRoutes = nil
 }
 
 // Count returns the number of active sessions.
@@ -199,6 +235,8 @@ func (m *Manager) ListSessions() []web.SessionInfo {
 			Active:    s.Active,
 			CreatedAt: s.CreatedAt.Format(time.RFC3339),
 			TunActive: m.tunSession == s.ID && m.tunIface != nil,
+			BytesIn:   ac.bytesIn.Load(),
+			BytesOut:  ac.bytesOut.Load(),
 		})
 	}
 	return result
@@ -221,6 +259,8 @@ func (m *Manager) GetSession(id string) (web.SessionInfo, bool) {
 		Active:    s.Active,
 		CreatedAt: s.CreatedAt.Format(time.RFC3339),
 		TunActive: m.tunSession == s.ID && m.tunIface != nil,
+		BytesIn:   ac.bytesIn.Load(),
+		BytesOut:  ac.bytesOut.Load(),
 	}, true
 }
 
@@ -266,6 +306,13 @@ func (m *Manager) AddTunnel(sessionID, direction, listen, remote, proto string) 
 	ac := m.getConn(sessionID)
 	if ac == nil {
 		return web.TunnelInfo{}, fmt.Errorf("session %s not found", sessionID)
+	}
+
+	if _, _, err := net.SplitHostPort(listen); err != nil {
+		return web.TunnelInfo{}, fmt.Errorf("invalid listen address %q: %w", listen, err)
+	}
+	if _, _, err := net.SplitHostPort(remote); err != nil {
+		return web.TunnelInfo{}, fmt.Errorf("invalid remote address %q: %w", remote, err)
 	}
 
 	tunnelID := genID()
@@ -662,6 +709,34 @@ func (m *Manager) StartTun(sessionID string) error {
 	}
 	ac.mu.RUnlock()
 
+	// Auto-add /24 routes derived from agent IPs.
+	ac.mu.Lock()
+	for _, ipStr := range ac.Info.IPs {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
+		}
+		if ip.To4() == nil || ip.IsLoopback() {
+			continue
+		}
+		ip4 := ip.To4()
+		cidr := fmt.Sprintf("%d.%d.%d.0/24", ip4[0], ip4[1], ip4[2])
+		if _, exists := ac.routes[cidr]; exists {
+			continue
+		}
+		if err := iface.AddRoute(cidr); err != nil {
+			fmt.Fprintf(os.Stderr, "[!] TUN auto-route %s: %v\n", cidr, err)
+			continue
+		}
+		ac.routes[cidr] = &web.RouteInfo{
+			CIDR:      cidr,
+			SessionID: sessionID,
+			Active:    true,
+		}
+		fmt.Printf("[*] TUN auto-route: %s via %s\n", cidr, iface.Name)
+	}
+	ac.mu.Unlock()
+
 	fmt.Printf("[*] TUN active on session %s — add routes with 'route add <cidr>'\n", sessionID)
 
 	return nil
@@ -794,6 +869,7 @@ func (m *Manager) tunRelayToStream(ctx context.Context, iface *tun.Interface, ac
 			}
 			return
 		}
+		ac.bytesOut.Add(int64(n))
 	}
 }
 
@@ -827,6 +903,7 @@ func (m *Manager) tunRelayFromStream(ctx context.Context, iface *tun.Interface, 
 			}
 			return
 		}
+		ac.bytesIn.Add(int64(len(pkt)))
 		protocol.PutPacketBuf(pkt)
 	}
 }
