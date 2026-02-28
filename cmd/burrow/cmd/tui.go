@@ -440,7 +440,7 @@ func (m tuiModel) handleSessionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		m.statusMsg = "Refreshing..."
 		return m, tuiFetchSessions(m.client, m.apiURL, m.apiToken)
-	case "T":
+	case "t", "T":
 		if len(m.sessions) > 0 && m.cursor < len(m.sessions) {
 			s := m.sessions[m.cursor]
 			action := "Starting"
