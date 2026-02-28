@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -685,15 +686,22 @@ func (m *Manager) tunRelayToStream(ctx context.Context, iface *tun.Interface, ac
 		}
 		n, err := iface.Read(buf)
 		if err != nil {
+			if ctx.Err() == nil {
+				fmt.Fprintf(os.Stderr, "[!] TUN read error: %v\n", err)
+			}
 			return
 		}
 		ac.mu.RLock()
 		stream := ac.tunStream
 		ac.mu.RUnlock()
 		if stream == nil {
+			fmt.Fprintln(os.Stderr, "[!] TUN relay: data stream is nil")
 			return
 		}
 		if err := protocol.WriteRawPacket(stream, buf[:n]); err != nil {
+			if ctx.Err() == nil {
+				fmt.Fprintf(os.Stderr, "[!] TUN write-to-stream error: %v\n", err)
+			}
 			return
 		}
 	}
@@ -705,6 +713,7 @@ func (m *Manager) tunRelayFromStream(ctx context.Context, iface *tun.Interface, 
 	stream := ac.tunStream
 	ac.mu.RUnlock()
 	if stream == nil {
+		fmt.Fprintln(os.Stderr, "[!] TUN relay: no data stream")
 		return
 	}
 	for {
@@ -715,9 +724,18 @@ func (m *Manager) tunRelayFromStream(ctx context.Context, iface *tun.Interface, 
 		}
 		pkt, err := protocol.ReadRawPacket(stream)
 		if err != nil {
+			if ctx.Err() == nil {
+				fmt.Fprintf(os.Stderr, "[!] TUN read-from-stream error: %v\n", err)
+				// Auto-cleanup: relay died but session should survive.
+				go m.StopTun(ac.Info.ID)
+			}
 			return
 		}
 		if _, err := iface.Write(pkt); err != nil {
+			if ctx.Err() == nil {
+				fmt.Fprintf(os.Stderr, "[!] TUN write-to-iface error: %v\n", err)
+				go m.StopTun(ac.Info.ID)
+			}
 			return
 		}
 	}
