@@ -17,7 +17,7 @@ const (
 	defaultAcceptBacklog          = 256
 	defaultKeepAliveInterval      = 30 * time.Second
 	defaultConnectionWriteTimeout = 10 * time.Second
-	defaultMaxStreamWindowSize    = 256 * 1024
+	defaultMaxStreamWindowSize    = 20 * 1024 * 1024 // 20MB — exceeds ligolo-ng (16MB) for max throughput
 )
 
 // Session wraps a yamux.Session, providing multiplexed streams over a single connection.

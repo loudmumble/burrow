@@ -390,6 +390,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m tuiModel) refreshDetail() tea.Cmd {
 	return tea.Batch(
+		tuiFetchSessions(m.client, m.apiURL, m.apiToken),
 		tuiFetchTunnels(m.client, m.apiURL, m.apiToken, m.selected),
 		tuiFetchRoutes(m.client, m.apiURL, m.apiToken, m.selected),
 	)
