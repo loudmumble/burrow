@@ -247,8 +247,9 @@ func (s *Stack) Close() error {
 }
 
 // handleTCP is called by the TCP forwarder for each new inbound SYN.
-// It completes the TCP handshake via gvisor, then dials the real destination
-// on the agent's network and relays data bidirectionally.
+// It dials the real destination FIRST, then completes the gvisor handshake
+// only if the dial succeeds. This ensures port scans (nmap) see only
+// actually-open ports instead of every port appearing open.
 func (s *Stack) handleTCP(req *tcp.ForwarderRequest) {
 	if s.ctx.Err() != nil {
 		req.Complete(true)
@@ -261,10 +262,23 @@ func (s *Stack) handleTCP(req *tcp.ForwarderRequest) {
 		fmt.Sprintf("%d", id.LocalPort),
 	)
 
+	// Dial the real destination BEFORE completing the gvisor handshake.
+	// Closed ports get an immediate RST with zero gvisor resource allocation.
+	// This prevents nmap from seeing all 65535 ports as open and eliminates
+	// thousands of wasted goroutines + endpoint allocations during scans.
+	dialer := net.Dialer{Timeout: tcpDialTimeout}
+	remote, err := dialer.DialContext(s.ctx, "tcp", dst)
+	if err != nil {
+		req.Complete(true) // RST — port not reachable
+		return
+	}
+	relay.TuneConn(remote)
+
 	var wq waiter.Queue
 	ep, tcpipErr := req.CreateEndpoint(&wq)
 	if tcpipErr != nil {
-		req.Complete(true) // send RST
+		req.Complete(true)
+		remote.Close()
 		s.logger.Printf("netstack: tcp: endpoint for %s: %v", dst, tcpipErr)
 		return
 	}
@@ -276,15 +290,6 @@ func (s *Stack) handleTCP(req *tcp.ForwarderRequest) {
 	ep.SocketOptions().SetDelayOption(false)
 
 	netstackConn := gonet.NewTCPConn(&wq, ep)
-
-	dialer := net.Dialer{Timeout: tcpDialTimeout}
-	remote, err := dialer.DialContext(s.ctx, "tcp", dst)
-	if err != nil {
-		netstackConn.Close()
-		s.logger.Printf("netstack: tcp: dial %s: %v", dst, err)
-		return
-	}
-	relay.TuneConn(remote)
 
 	s.logger.Printf("netstack: tcp: %s:%d -> %s",
 		id.RemoteAddress, id.RemotePort, dst)
