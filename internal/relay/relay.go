@@ -93,15 +93,43 @@ func normalizeListenAddr(arg string) string {
 	return "0.0.0.0:" + arg
 }
 
-// relayBufSize is the buffer size for bidirectional relay (256KB for throughput).
-const relayBufSize = 256 * 1024
+// BufSize is the relay buffer size (256KB). Drains a full default socket
+// receive buffer in one syscall. 8x larger than Go's default 32KB io.Copy.
+const BufSize = 256 * 1024
 
-// relayBufPool pools relay buffers to avoid per-connection allocations.
-var relayBufPool = sync.Pool{
+// bufPool is the shared relay buffer pool. All relay paths use this single
+// pool instead of per-package duplicates.
+var bufPool = sync.Pool{
 	New: func() any {
-		b := make([]byte, relayBufSize)
+		b := make([]byte, BufSize)
 		return &b
 	},
+}
+
+// writeOnly wraps an io.Writer to hide the io.ReaderFrom interface.
+// This prevents io.CopyBuffer from bypassing our pooled buffer via
+// TCPConn.ReadFrom → splice(2) fallback → genericReadFrom(make([]byte, 32KB)).
+type writeOnly struct{ io.Writer }
+
+// CopyBuffered copies src to dst using a pooled 256KB buffer.
+// It wraps dst to prevent io.CopyBuffer from silently falling back to
+// an unpooled 32KB buffer via the ReaderFrom interface.
+func CopyBuffered(dst io.Writer, src io.Reader) (int64, error) {
+	bp := bufPool.Get().(*[]byte)
+	n, err := io.CopyBuffer(writeOnly{dst}, src, *bp)
+	bufPool.Put(bp)
+	return n, err
+}
+
+// TuneConn applies TCP performance tuning to a connection:
+// TCP_NODELAY (disable Nagle), 4MB socket buffers (SO_RCVBUF/SO_SNDBUF).
+// Silently no-ops for non-TCP connections (yamux streams, unix sockets).
+func TuneConn(c net.Conn) {
+	if tc, ok := c.(*net.TCPConn); ok {
+		_ = tc.SetNoDelay(true)
+		_ = tc.SetReadBuffer(4 * 1024 * 1024)
+		_ = tc.SetWriteBuffer(4 * 1024 * 1024)
+	}
 }
 
 // Relay performs bidirectional copy between two ReadWriteClosers.
@@ -120,18 +148,14 @@ func Relay(ctx context.Context, a, b io.ReadWriteCloser) error {
 
 	go func() {
 		defer func() { done <- struct{}{} }()
-		bp := relayBufPool.Get().(*[]byte)
-		_, err := io.CopyBuffer(a, b, *bp)
-		relayBufPool.Put(bp)
+		_, err := CopyBuffered(a, b)
 		setErr(err)
 		cancel()
 	}()
 
 	go func() {
 		defer func() { done <- struct{}{} }()
-		bp := relayBufPool.Get().(*[]byte)
-		_, err := io.CopyBuffer(b, a, *bp)
-		relayBufPool.Put(bp)
+		_, err := CopyBuffered(b, a)
 		setErr(err)
 		cancel()
 	}()

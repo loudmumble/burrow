@@ -19,6 +19,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/loudmumble/burrow/internal/relay"
 )
 
 // HTTPProxyConfig holds HTTP proxy server configuration.
@@ -357,9 +359,8 @@ func (p *HTTPProxy) httpRelay(ctx context.Context, client, target net.Conn) {
 
 	copyFunc := func(dst, src net.Conn, counter *atomic.Int64) {
 		defer func() { done <- struct{}{} }()
-		n, _ := io.Copy(dst, src)
+		n, _ := relay.CopyBuffered(dst, src)
 		counter.Add(n)
-		// Signal the other direction to stop by closing write side
 		if tc, ok := dst.(*net.TCPConn); ok {
 			tc.CloseWrite()
 		}

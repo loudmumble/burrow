@@ -11,12 +11,13 @@ package netstack
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"sync"
 	"time"
 
+	"github.com/loudmumble/burrow/internal/protocol"
+	"github.com/loudmumble/burrow/internal/relay"
 	"github.com/nicocha30/gvisor-ligolo/pkg/buffer"
 	"github.com/nicocha30/gvisor-ligolo/pkg/tcpip"
 	"github.com/nicocha30/gvisor-ligolo/pkg/tcpip/adapters/gonet"
@@ -212,7 +213,8 @@ func (s *Stack) ReadPacket(ctx context.Context) ([]byte, error) {
 	view := pkt.ToView()
 	defer view.Release()
 
-	data := make([]byte, view.Size())
+	size := view.Size()
+	data := protocol.GetPacketBuf(size)
 	copy(data, view.AsSlice())
 	return data, nil
 }
@@ -260,11 +262,7 @@ func (s *Stack) handleTCP(req *tcp.ForwarderRequest) {
 		s.logger.Printf("netstack: tcp: dial %s: %v", dst, err)
 		return
 	}
-	if tc, ok := remote.(*net.TCPConn); ok {
-		_ = tc.SetNoDelay(true)
-		_ = tc.SetReadBuffer(4 * 1024 * 1024)
-		_ = tc.SetWriteBuffer(4 * 1024 * 1024)
-	}
+	relay.TuneConn(remote)
 
 	s.logger.Printf("netstack: tcp: %s:%d -> %s",
 		id.RemoteAddress, id.RemotePort, dst)
@@ -272,7 +270,7 @@ func (s *Stack) handleTCP(req *tcp.ForwarderRequest) {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		relay(netstackConn, remote)
+		relayTCP(netstackConn, remote)
 	}()
 }
 
@@ -317,33 +315,19 @@ func (s *Stack) handleUDP(req *udp.ForwarderRequest) {
 	}()
 }
 
-// relayBufSize is the buffer size for bidirectional relay (256KB for throughput).
-const relayBufSize = 256 * 1024
-
-// relayBufPool pools relay buffers to avoid per-connection allocations.
-var relayBufPool = sync.Pool{
-	New: func() any {
-		b := make([]byte, relayBufSize)
-		return &b
-	},
-}
-
-// relay copies data bidirectionally between two connections. Both connections
-// are closed when relay returns.
-func relay(a, b net.Conn) {
+// relayTCP copies data bidirectionally between two connections. Both connections
+// are closed when relay returns. Uses centralized 256KB pooled buffers with
+// writeOnly wrapper to prevent ReaderFrom bypass.
+func relayTCP(a, b net.Conn) {
 	defer a.Close()
 	defer b.Close()
 
 	done := make(chan struct{})
 	go func() {
-		bp := relayBufPool.Get().(*[]byte)
-		io.CopyBuffer(b, a, *bp)
-		relayBufPool.Put(bp)
+		relay.CopyBuffered(b, a)
 		close(done)
 	}()
-	bp := relayBufPool.Get().(*[]byte)
-	io.CopyBuffer(a, b, *bp)
-	relayBufPool.Put(bp)
+	relay.CopyBuffered(a, b)
 	<-done
 }
 
@@ -358,12 +342,13 @@ func relayUDP(a, b net.Conn, idleTimeout time.Duration) {
 	// a -> b
 	go func() {
 		buf := make([]byte, 65535)
+		a.SetReadDeadline(time.Now().Add(idleTimeout))
 		for {
-			a.SetReadDeadline(time.Now().Add(idleTimeout))
 			n, err := a.Read(buf)
 			if err != nil {
 				break
 			}
+			a.SetReadDeadline(time.Now().Add(idleTimeout))
 			b.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			if _, err := b.Write(buf[:n]); err != nil {
 				break
@@ -374,12 +359,13 @@ func relayUDP(a, b net.Conn, idleTimeout time.Duration) {
 
 	// b -> a
 	buf := make([]byte, 65535)
+	b.SetReadDeadline(time.Now().Add(idleTimeout))
 	for {
-		b.SetReadDeadline(time.Now().Add(idleTimeout))
 		n, err := b.Read(buf)
 		if err != nil {
 			break
 		}
+		b.SetReadDeadline(time.Now().Add(idleTimeout))
 		a.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		if _, err := a.Write(buf[:n]); err != nil {
 			break

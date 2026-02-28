@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/loudmumble/burrow/internal/relay"
 )
 
 // Hop represents a single node in a pivot chain.
@@ -355,7 +357,7 @@ func (c *Chain) relayThrough(ctx context.Context, local net.Conn) {
 	done := make(chan struct{}, 2)
 	cp := func(dst, src net.Conn) {
 		defer func() { done <- struct{}{} }()
-		n, _ := io.Copy(dst, src)
+		n, _ := relay.CopyBuffered(dst, src)
 		c.bytesTotal.Add(n)
 		if tc, ok := dst.(*net.TCPConn); ok {
 			tc.CloseWrite()

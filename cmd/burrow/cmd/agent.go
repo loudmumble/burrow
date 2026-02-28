@@ -7,12 +7,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"os/signal"
 	"runtime"
-	"sync"
 	"syscall"
 	"time"
 
@@ -20,6 +18,7 @@ import (
 	"github.com/loudmumble/burrow/internal/mux"
 	"github.com/loudmumble/burrow/internal/netstack"
 	"github.com/loudmumble/burrow/internal/protocol"
+	"github.com/loudmumble/burrow/internal/relay"
 	"github.com/loudmumble/burrow/internal/transport"
 	_ "github.com/loudmumble/burrow/internal/transport/dns"
 	_ "github.com/loudmumble/burrow/internal/transport/icmp"
@@ -442,14 +441,6 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 	}
 }
 
-// agentRelayPool pools 256KB relay buffers to avoid per-connection allocations.
-var agentRelayPool = sync.Pool{
-	New: func() any {
-		b := make([]byte, 256*1024)
-		return &b
-	},
-}
-
 func acceptAndRelay(ctx context.Context, ln net.Listener, forwardAddr string) {
 	go func() {
 		<-ctx.Done()
@@ -465,27 +456,20 @@ func acceptAndRelay(ctx context.Context, ln net.Listener, forwardAddr string) {
 		}
 		go func(c net.Conn) {
 			defer c.Close()
+			relay.TuneConn(c)
 			remote, err := net.DialTimeout("tcp", forwardAddr, 10*time.Second)
 			if err != nil {
 				return
 			}
 			defer remote.Close()
-			if tc, ok := remote.(*net.TCPConn); ok {
-				_ = tc.SetNoDelay(true)
-				_ = tc.SetReadBuffer(4 * 1024 * 1024)
-				_ = tc.SetWriteBuffer(4 * 1024 * 1024)
-			}
+			relay.TuneConn(remote)
 			done := make(chan struct{}, 2)
 			go func() {
-				bp := agentRelayPool.Get().(*[]byte)
-				io.CopyBuffer(remote, c, *bp)
-				agentRelayPool.Put(bp)
+				relay.CopyBuffered(remote, c)
 				done <- struct{}{}
 			}()
 			go func() {
-				bp := agentRelayPool.Get().(*[]byte)
-				io.CopyBuffer(c, remote, *bp)
-				agentRelayPool.Put(bp)
+				relay.CopyBuffered(c, remote)
 				done <- struct{}{}
 			}()
 			<-done
@@ -538,6 +522,7 @@ func tunAgentRelay(ctx context.Context, stream net.Conn, ns *netstack.Stack) {
 			return
 		}
 		if err := protocol.WriteRawPacket(stream, pkt); err != nil {
+		protocol.PutPacketBuf(pkt)
 			return
 		}
 	}
@@ -562,6 +547,7 @@ func remoteTunnelAcceptLoop(ctx context.Context, ln net.Listener, sess *mux.Sess
 
 func remoteTunnelRelay(conn net.Conn, sess *mux.Session, remoteAddr string) {
 	defer conn.Close()
+	relay.TuneConn(conn)
 	stream, err := sess.Open()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[!] Remote tunnel: failed to open yamux stream: %v\n", err)
@@ -583,15 +569,11 @@ func remoteTunnelRelay(conn net.Conn, sess *mux.Session, remoteAddr string) {
 	// Bidirectional relay between incoming connection and yamux stream
 	done := make(chan struct{}, 2)
 	go func() {
-		bp := agentRelayPool.Get().(*[]byte)
-		io.CopyBuffer(stream, conn, *bp)
-		agentRelayPool.Put(bp)
+		relay.CopyBuffered(stream, conn)
 		done <- struct{}{}
 	}()
 	go func() {
-		bp := agentRelayPool.Get().(*[]byte)
-		io.CopyBuffer(conn, stream, *bp)
-		agentRelayPool.Put(bp)
+		relay.CopyBuffered(conn, stream)
 		done <- struct{}{}
 	}()
 	<-done

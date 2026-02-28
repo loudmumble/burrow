@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"math"
 	"math/rand/v2"
@@ -14,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/loudmumble/burrow/internal/relay"
 )
 
 // Direction indicates whether a tunnel forwards traffic locally or remotely.
@@ -153,12 +154,7 @@ func (t *Tunnel) acceptLoop(ctx context.Context) {
 func (t *Tunnel) handleConn(ctx context.Context, local net.Conn) {
 	defer local.Close()
 
-	// Tune accepted connection.
-	if tc, ok := local.(*net.TCPConn); ok {
-		_ = tc.SetNoDelay(true)
-		_ = tc.SetReadBuffer(4 * 1024 * 1024)
-		_ = tc.SetWriteBuffer(4 * 1024 * 1024)
-	}
+	relay.TuneConn(local)
 
 	dialer := net.Dialer{Timeout: t.dialTimeout}
 	remote, err := dialer.DialContext(ctx, "tcp", t.RemoteAddr)
@@ -168,18 +164,13 @@ func (t *Tunnel) handleConn(ctx context.Context, local net.Conn) {
 	}
 	defer remote.Close()
 
-	// Tune dialed connection.
-	if tc, ok := remote.(*net.TCPConn); ok {
-		_ = tc.SetNoDelay(true)
-		_ = tc.SetReadBuffer(4 * 1024 * 1024)
-		_ = tc.SetWriteBuffer(4 * 1024 * 1024)
-	}
+	relay.TuneConn(remote)
 
 	t.mu.Lock()
 	t.conns = append(t.conns, local, remote)
 	t.mu.Unlock()
 
-	relay(local, remote, &t.bytesIn, &t.bytesOut)
+	relayConns(local, remote, &t.bytesIn, &t.bytesOut)
 }
 
 // Stop closes the tunnel listener and all active connections.
@@ -324,12 +315,7 @@ func (rt *ReverseTunnel) acceptLoop(ctx context.Context, ln net.Listener) {
 func (rt *ReverseTunnel) handleIncoming(ctx context.Context, incoming net.Conn) {
 	defer incoming.Close()
 
-	// Tune accepted connection.
-	if tc, ok := incoming.(*net.TCPConn); ok {
-		_ = tc.SetNoDelay(true)
-		_ = tc.SetReadBuffer(4 * 1024 * 1024)
-		_ = tc.SetWriteBuffer(4 * 1024 * 1024)
-	}
+	relay.TuneConn(incoming)
 
 	target, err := net.DialTimeout("tcp", rt.config.LocalTarget, 10*time.Second)
 	if err != nil {
@@ -338,15 +324,10 @@ func (rt *ReverseTunnel) handleIncoming(ctx context.Context, incoming net.Conn) 
 	}
 	defer target.Close()
 
-	// Tune dialed connection.
-	if tc, ok := target.(*net.TCPConn); ok {
-		_ = tc.SetNoDelay(true)
-		_ = tc.SetReadBuffer(4 * 1024 * 1024)
-		_ = tc.SetWriteBuffer(4 * 1024 * 1024)
-	}
+	relay.TuneConn(target)
 
 	var bytesIn, bytesOut atomic.Int64
-	relay(incoming, target, &bytesIn, &bytesOut)
+	relayConns(incoming, target, &bytesIn, &bytesOut)
 }
 
 // ConnectOutbound initiates a reverse connection to a remote controller
@@ -460,26 +441,14 @@ func (rt *ReverseTunnel) Addr() string {
 	return ""
 }
 
-// relayBufSize is the buffer size for bidirectional relay (256KB for throughput).
-const relayBufSize = 256 * 1024
-
-// relayBufPool pools relay buffers to avoid per-connection allocations.
-var relayBufPool = sync.Pool{
-	New: func() any {
-		b := make([]byte, relayBufSize)
-		return &b
-	},
-}
-
-// relay performs bidirectional copy between two connections.
-func relay(a, b net.Conn, bytesAB, bytesBA *atomic.Int64) {
+// relay performs bidirectional copy between two connections using the
+// centralized 256KB pooled buffer with writeOnly wrapper.
+func relayConns(a, b net.Conn, bytesAB, bytesBA *atomic.Int64) {
 	done := make(chan struct{}, 2)
 
 	cp := func(dst, src net.Conn, counter *atomic.Int64) {
 		defer func() { done <- struct{}{} }()
-		bp := relayBufPool.Get().(*[]byte)
-		n, _ := io.CopyBuffer(dst, src, *bp)
-		relayBufPool.Put(bp)
+		n, _ := relay.CopyBuffered(dst, src)
 		if counter != nil {
 			counter.Add(n)
 		}
