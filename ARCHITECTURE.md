@@ -3,7 +3,7 @@
 ## Package Map
 
 ```
-cmd/burrow/cmd/
+cmd/burrow/cmd/          CLI (cobra) + TUI (bubbletea)
   root.go              Cobra root command, version 3.0.0
   proxy.go             SOCKS5 + HTTP forward proxy commands
   forward.go           Local port forward command
@@ -16,6 +16,7 @@ cmd/burrow/cmd/
   relay.go             Socat-style bidirectional relay command
   httptunnel.go        HTTP tunnel server + client commands (reGeorg-style)
   generate.go          Webshell generator command (PHP/ASPX/JSP)
+  tui.go               Interactive TUI dashboard (bubbletea, --tui flag on server)
 
 internal/crypto/       X25519 ECDH + ChaCha20-Poly1305/AES-256-GCM frame encryption
 internal/proxy/        SOCKS5 + HTTP forward proxy with session routing (Dialer hook)
@@ -44,7 +45,11 @@ internal/netstack/     gvisor userspace TCP/IP (agent-side packet termination)
 internal/web/          Embedded WebUI: REST API + SSE + Alpine.js/Pico CSS dashboard
 ```
 
-## Agent Data Flow (Transparent VPN Mode)
+## Agent Data Flow (Transparent VPN / TUN Mode)
+
+Routes are managed manually by the operator (ligolo-ng style). The server cannot
+auto-detect target subnets vs C2 subnets, so routing the wrong network would kill
+the agent connection via a routing loop.
 
 ```
 Operator Side (root required)                 Agent Side (no root)
@@ -57,14 +62,22 @@ Operator Side (root required)                 Agent Side (no root)
       v                                              |
   Operator's                                   net.Dial() to
   routing table                                real targets on
-  routes 240.0.0.0/4                           agent's network
-  through TUN
+  (manual routes only)                         agent's network
+  e.g. ip route add 10.10.10.0/24
+       dev tun0
 
 Control channel (yamux stream 0):
   MsgHandshake / MsgHandshakeAck  -- agent registration
   MsgTunnelRequest / MsgTunnelAck -- create port forwards
   MsgRouteAdd / MsgRouteRemove    -- manage routes
   MsgTunnelClose                  -- tear down
+
+Key implementation details:
+  - tunAgentRelay: bidirectional goroutine pair with injectDone channel
+    to detect inner goroutine death and clean up both directions
+  - tunRelayToStream: retries on nil stream (continue, not return)
+  - ICMP: rate.Inf (unlimited) — SetICMPLimit(0) blocks all ICMP
+  - No auto-route: removed subnetAlreadyRouted() — manual only
 ```
 
 ## HTTP Tunnel Data Flow (Egress-Blocked Scenario)
@@ -113,14 +126,21 @@ burrow tunnel local         burrow agent
   :8080 ----TCP----> yamux stream N ----TCP----> 10.0.0.5:80
 ```
 
-## WebUI Architecture
+## WebUI / REST API Architecture
+
+The REST API is exclusively for MCP (Model Context Protocol) server integration.
+It is only enabled when `--mcp-api` is passed. The WebUI dashboard is enabled
+with `--webui`. The TUI dashboard (`--tui`) connects to the same session manager
+in-process.
 
 ```
 Browser/HTTP Client --> GET /static/* --> embedded Alpine.js + Pico CSS SPA
-             (Auth: Bearer Token required for below APIs)
+             (Auth: Bearer Token required for API, only with --mcp-api)
          --> GET /api/sessions --> JSON session list
          --> GET /api/sessions/{id}/tunnels --> JSON tunnel list
          --> POST /api/sessions/{id}/tunnels --> create tunnel
+         --> POST /api/sessions/{id}/tun --> start TUN
+         --> DELETE /api/sessions/{id}/tun --> stop TUN
          --> GET /api/events --> SSE stream (live session/tunnel updates)
 ```
 
