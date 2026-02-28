@@ -43,6 +43,7 @@ type tuiSessionInfo struct {
 	Routes    int      `json:"route_count"`
 	BytesIn   int64    `json:"bytes_in"`
 	BytesOut  int64    `json:"bytes_out"`
+	TunActive bool     `json:"tun_active"`
 }
 
 type tuiTunnelInfo struct {
@@ -282,6 +283,30 @@ func tuiDoRemoveRoute(client *http.Client, apiURL, token, sessionID, cidr string
 	}
 }
 
+func tuiDoToggleTUN(client *http.Client, apiURL, token, sessionID string, currentlyActive bool) tea.Cmd {
+	return func() tea.Msg {
+		method := http.MethodPost
+		if currentlyActive {
+			method = http.MethodDelete
+		}
+		resp, err := tuiRequest(client, method,
+			apiURL+"/api/sessions/"+sessionID+"/tun",
+			token, nil)
+		if err != nil {
+			return tuiActionErrMsg{err}
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			return tuiActionErrMsg{fmt.Errorf("%s", strings.TrimSpace(string(b)))}
+		}
+		if currentlyActive {
+			return tuiActionDoneMsg("TUN stopped")
+		}
+		return tuiActionDoneMsg("TUN started — routes auto-added from agent IPs")
+	}
+}
+
 func tuiTickCmd() tea.Cmd {
 	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
 		return tuiTickMsg(t)
@@ -342,6 +367,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuiActionDoneMsg:
 		m.statusMsg = string(msg)
 		m.err = nil
+		if m.view == tuiViewSessions {
+			return m, tuiFetchSessions(m.client, m.apiURL, m.apiToken)
+		}
 		return m, m.refreshDetail()
 
 	case tuiActionErrMsg:
@@ -412,6 +440,16 @@ func (m tuiModel) handleSessionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		m.statusMsg = "Refreshing..."
 		return m, tuiFetchSessions(m.client, m.apiURL, m.apiToken)
+	case "T":
+		if len(m.sessions) > 0 && m.cursor < len(m.sessions) {
+			s := m.sessions[m.cursor]
+			action := "Starting"
+			if s.TunActive {
+				action = "Stopping"
+			}
+			m.statusMsg = fmt.Sprintf("%s TUN on %s...", action, s.ID)
+			return m, tuiDoToggleTUN(m.client, m.apiURL, m.apiToken, s.ID, s.TunActive)
+		}
 	}
 	return m, nil
 }
@@ -583,8 +621,8 @@ func (m tuiModel) viewSessions(b *strings.Builder) {
 	if len(m.sessions) == 0 {
 		b.WriteString(tuiHelpStyle.Render("  No sessions. Waiting for agents to connect...") + "\n")
 	} else {
-		hdr := fmt.Sprintf("  %-18s %-14s %-7s %-20s %4s %4s %-7s %9s %9s",
-			"ID", "HOSTNAME", "OS", "IPs", "T", "R", "STATUS", "IN", "OUT")
+		hdr := fmt.Sprintf("  %-18s %-14s %-7s %-20s %-5s %4s %4s %-7s %9s %9s",
+			"ID", "HOSTNAME", "OS", "IPs", "TUN", "T", "R", "STATUS", "IN", "OUT")
 		b.WriteString(tuiHeaderStyle.Render(hdr) + "\n")
 
 		for i, s := range m.sessions {
@@ -600,19 +638,25 @@ func (m tuiModel) viewSessions(b *strings.Builder) {
 				statusStr = tuiStatusInactiveStyle.Render("dead  ")
 			}
 
-			cols := fmt.Sprintf("%-18s %-14s %-7s %-20s %4d %4d",
+			tunStr := tuiDimStyle.Render("  -  ")
+			if s.TunActive {
+				tunStr = tuiStatusActiveStyle.Render(" \u25cf  ")
+			}
+
+			cols := fmt.Sprintf("%-18s %-14s %-7s %-20s",
 				tuiTruncate(s.ID, 16),
 				tuiTruncate(s.Hostname, 12),
 				tuiTruncate(s.OS, 5),
-				ips, s.Tunnels, s.Routes)
+				ips)
+			nums := fmt.Sprintf(" %4d %4d", s.Tunnels, s.Routes)
 
 			bw := fmt.Sprintf(" %9s %9s",
 				tuiFormatBytes(s.BytesIn), tuiFormatBytes(s.BytesOut))
 
 			if i == m.cursor {
-				b.WriteString(tuiSelectedStyle.Render("▸ "+cols) + " " + statusStr + tuiSelectedStyle.Render(bw) + "\n")
+				b.WriteString(tuiSelectedStyle.Render("\u25b8 "+cols) + " " + tunStr + tuiSelectedStyle.Render(nums) + " " + statusStr + tuiSelectedStyle.Render(bw) + "\n")
 			} else {
-				b.WriteString("  " + cols + " " + statusStr + bw + "\n")
+				b.WriteString("  " + cols + " " + tunStr + nums + " " + statusStr + bw + "\n")
 			}
 		}
 	}
@@ -622,7 +666,7 @@ func (m tuiModel) viewSessions(b *strings.Builder) {
 	}
 
 	b.WriteString("\n\n")
-	b.WriteString(tuiHelpStyle.Render("  ↑/k up  ↓/j down  enter select  r refresh  q quit"))
+	b.WriteString(tuiHelpStyle.Render("  \u2191/k up  \u2193/j down  enter select  T toggle TUN  r refresh  q quit"))
 }
 
 func (m tuiModel) viewDetail(b *strings.Builder) {
