@@ -864,12 +864,23 @@ func (m tuiModel) viewDetail(b *strings.Builder) {
 		}
 	}
 
-	m.renderBanner(b)
-	b.WriteString("\n")
-
 	if sess != nil {
+		// Logo block — slightly larger with padding, in its own styled panel
+		logoLines := strings.Join([]string{
+			stAccent.Bold(true).Render("  ╔══╗ ╦ ╦ ╦═╗ ╦═╗ ╔══╗ ╦   ╦  "),
+			stAccent.Bold(true).Render("  ╠══╣ ║ ║ ╠╦╝ ╠╦╝ ║  ║ ║ ╦ ║  "),
+			stAccent.Bold(true).Render("  ╚══╝ ╚═╝ ╩╚═ ╩╚═ ╚══╝ ╚═╝═╝  "),
+			"",
+			stDim.Render("   v" + version + " │ pentest pivoting"),
+		}, "\n")
+		logoBox := lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("205")).
+			Padding(1, 2).
+			Render(logoLines)
+
 		// Info panel
-		boxW := min(m.width-4, 65)
+		boxW := min(m.width-lipgloss.Width(logoBox)-6, 65)
 		if boxW < 30 {
 			boxW = 30
 		}
@@ -911,7 +922,10 @@ func (m tuiModel) viewDetail(b *strings.Builder) {
 		}, "\n")
 
 		panel := stPanel.Width(boxW).Render(infoContent)
-		b.WriteString(panel + "\n")
+
+		// Side-by-side: logo left, session info right
+		composed := lipgloss.JoinHorizontal(lipgloss.Top, logoBox, "  ", panel)
+		b.WriteString(composed + "\n")
 	} else {
 		b.WriteString(stDim.Render("  Session data not available") + "\n")
 	}
