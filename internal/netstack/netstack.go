@@ -30,7 +30,6 @@ import (
 	"github.com/nicocha30/gvisor-ligolo/pkg/tcpip/transport/tcp"
 	"github.com/nicocha30/gvisor-ligolo/pkg/tcpip/transport/udp"
 	"github.com/nicocha30/gvisor-ligolo/pkg/waiter"
-	"golang.org/x/time/rate"
 )
 
 const (
@@ -112,11 +111,11 @@ func New(opts Opts) (*Stack, error) {
 		HandleLocal: false,
 	})
 
-	// Disable ICMP rate limiting so all ICMP messages are delivered.
-	// NOTE: SetICMPLimit(0) means rate=0 which BLOCKS all ICMP.
-	// rate.Inf means no limit.
-	ns.SetICMPLimit(rate.Inf)
-	ns.SetICMPBurst(1 << 30) // effectively unlimited burst
+	// Disable ICMP rate limiting — block all ICMP through the tunnel.
+	// Matches ligolo-ng: prevents ICMP noise during nmap scans.
+	// rate=0 blocks all ICMP; burst=0 means no burst allowance.
+	ns.SetICMPLimit(0)
+	ns.SetICMPBurst(0)
 
 	// Create the channel-backed virtual NIC.
 	ep := channel.New(channelSize, opts.MTU, "")
@@ -144,9 +143,15 @@ func New(opts Opts) (*Stack, error) {
 	ns.SetForwardingDefaultAndAllNICs(ipv4.ProtocolNumber, false)
 	ns.SetForwardingDefaultAndAllNICs(ipv6.ProtocolNumber, false)
 
-	// Enable TCP SACK for better loss recovery and throughput.
-	sackOpt := tcpip.TCPSACKEnabled(true)
+	// Disable TCP SACK — matches ligolo-ng. SACK can cause issues with some
+	// Windows RDP stacks and adds complexity in tunneled environments.
+	sackOpt := tcpip.TCPSACKEnabled(false)
 	ns.SetTransportProtocolOption(tcp.ProtocolNumber, &sackOpt)
+
+	// Disable SYN cookies — matches ligolo-ng. SYN cookies can interfere
+	// with nmap scans and connection establishment in proxied environments.
+	synCookies := tcpip.TCPAlwaysUseSynCookies(false)
+	ns.SetTransportProtocolOption(tcp.ProtocolNumber, &synCookies)
 
 	// Set TCP send buffer range to match receive buffer for symmetric throughput.
 	// Default ~208KB is too small for RDP activation bursts (server→client).
@@ -256,9 +261,9 @@ func (s *Stack) Close() error {
 }
 
 // handleTCP is called by the TCP forwarder for each new inbound SYN.
-// It dials the real destination FIRST, then completes the gvisor handshake
-// only if the dial succeeds. This ensures port scans (nmap) see only
-// actually-open ports instead of every port appearing open.
+// It completes the gvisor handshake FIRST (CreateEndpoint), then dials the
+// real destination. This matches ligolo-ng's proven pattern and ensures the
+// client receives a SYN-ACK immediately instead of waiting for the dial.
 func (s *Stack) handleTCP(req *tcp.ForwarderRequest) {
 	if s.ctx.Err() != nil {
 		req.Complete(true)
@@ -271,38 +276,39 @@ func (s *Stack) handleTCP(req *tcp.ForwarderRequest) {
 		fmt.Sprintf("%d", id.LocalPort),
 	)
 
-	// Dial the real destination BEFORE completing the gvisor handshake.
-	// Closed ports get an immediate RST with zero gvisor resource allocation.
-	// This prevents nmap from seeing all 65535 ports as open and eliminates
-	// thousands of wasted goroutines + endpoint allocations during scans.
-	dialer := net.Dialer{Timeout: tcpDialTimeout}
-	remote, err := dialer.DialContext(s.ctx, "tcp", dst)
-	if err != nil {
-		req.Complete(true) // RST — port not reachable
-		return
-	}
-	relay.TuneConn(remote)
-
+	// Create the gvisor endpoint FIRST — sends SYN-ACK to the client immediately.
+	// This prevents the client from timing out during slow real-server dials.
 	var wq waiter.Queue
 	ep, tcpipErr := req.CreateEndpoint(&wq)
 	if tcpipErr != nil {
 		req.Complete(true)
-		remote.Close()
 		s.logger.Printf("netstack: tcp: endpoint for %s: %v", dst, tcpipErr)
 		return
 	}
-	req.Complete(false)
+	// Note: CreateEndpoint internally completes the forwarder request
+	// (removes from inFlight map, sends SYN-ACK). No need to call Complete(false).
+
 	// Disable Nagle's algorithm on the gvisor endpoint. Critical for relay:
 	// Nagle + delayed ACKs across the tunnel causes sub-MSS segments to stall
 	// ~200ms each, killing RDP activation (50KB = ~34 segments × 200ms > 16s timeout).
 	// relay.TuneConn only handles *net.TCPConn; this is a gonet.TCPConn.
 	ep.SocketOptions().SetDelayOption(false)
+	ep.SocketOptions().SetKeepAlive(true)
 	kaIdle := tcpip.KeepaliveIdleOption(30 * time.Second)
 	ep.SetSockOpt(&kaIdle)
 	kaInterval := tcpip.KeepaliveIntervalOption(10 * time.Second)
 	ep.SetSockOpt(&kaInterval)
 
 	netstackConn := gonet.NewTCPConn(&wq, ep)
+
+	// Now dial the real destination.
+	dialer := net.Dialer{Timeout: tcpDialTimeout}
+	remote, err := dialer.DialContext(s.ctx, "tcp", dst)
+	if err != nil {
+		netstackConn.Close()
+		return
+	}
+	relay.TuneConn(remote)
 
 	s.logger.Printf("netstack: tcp: %s:%d -> %s",
 		id.RemoteAddress, id.RemotePort, dst)
