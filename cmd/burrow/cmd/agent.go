@@ -52,7 +52,7 @@ func init() {
 	agentCmd.Flags().StringP("connect", "c", "", "Server address to connect to (required)")
 	agentCmd.Flags().String("fingerprint", "", "Expected server TLS fingerprint for verification")
 	agentCmd.Flags().Int("max-retries", 0, "Max reconnection attempts (0 = infinite)")
-	agentCmd.Flags().StringP("transport", "t", "raw", "Transport protocol (raw, ws, dns, icmp)")
+	agentCmd.Flags().StringP("transport", "t", "raw", "Transport protocol (raw, ws, dns, icmp, http)")
 	agentCmd.Flags().Bool("no-tls", false, "Connect without TLS")
 	agentCmd.MarkFlagRequired("connect")
 }
