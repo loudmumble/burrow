@@ -496,6 +496,22 @@ func (m tuiModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.err = nil
 	case "d", "delete":
 		return m.handleDelete()
+	case "T":
+		if m.selected != "" {
+			var active bool
+			for _, s := range m.sessions {
+				if s.ID == m.selected {
+					active = s.TunActive
+					break
+				}
+			}
+			action := "Starting"
+			if active {
+				action = "Stopping"
+			}
+			m.statusMsg = fmt.Sprintf("%s TUN on %s...", action, m.selected)
+			return m, tuiDoToggleTUN(m.client, m.apiURL, m.apiToken, m.selected, active)
+		}
 	}
 	return m, nil
 }
@@ -731,7 +747,7 @@ func (m tuiModel) viewDetail(b *strings.Builder) {
 	}
 
 	b.WriteString("\n\n")
-	b.WriteString(tuiHelpStyle.Render("  ↑/k up  ↓/j down  t tunnel  r route  d delete  tab switch  esc back"))
+	b.WriteString(tuiHelpStyle.Render("  \u2191/k up  \u2193/j down  T toggle TUN  t tunnel  r route  d delete  tab switch  esc back"))
 }
 
 func (m tuiModel) viewTunnels(b *strings.Builder) {
