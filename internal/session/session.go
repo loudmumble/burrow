@@ -709,33 +709,6 @@ func (m *Manager) StartTun(sessionID string) error {
 	}
 	ac.mu.RUnlock()
 
-	// Auto-add /24 routes derived from agent IPs.
-	ac.mu.Lock()
-	for _, ipStr := range ac.Info.IPs {
-		ip := net.ParseIP(ipStr)
-		if ip == nil {
-			continue
-		}
-		if ip.To4() == nil || ip.IsLoopback() {
-			continue
-		}
-		ip4 := ip.To4()
-		cidr := fmt.Sprintf("%d.%d.%d.0/24", ip4[0], ip4[1], ip4[2])
-		if _, exists := ac.routes[cidr]; exists {
-			continue
-		}
-		if err := iface.AddRoute(cidr); err != nil {
-			fmt.Fprintf(os.Stderr, "[!] TUN auto-route %s: %v\n", cidr, err)
-			continue
-		}
-		ac.routes[cidr] = &web.RouteInfo{
-			CIDR:      cidr,
-			SessionID: sessionID,
-			Active:    true,
-		}
-		fmt.Printf("[*] TUN auto-route: %s via %s\n", cidr, iface.Name)
-	}
-	ac.mu.Unlock()
 
 	fmt.Printf("[*] TUN active on session %s — add routes with 'route add <cidr>'\n", sessionID)
 

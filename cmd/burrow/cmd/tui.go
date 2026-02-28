@@ -357,7 +357,7 @@ func tuiDoToggleTUN(client *http.Client, apiURL, token, sessionID string, curren
 		if currentlyActive {
 			return tuiActionDoneMsg("TUN stopped")
 		}
-		return tuiActionDoneMsg("TUN started — routes auto-added from agent IPs")
+		return tuiActionDoneMsg("TUN started — add routes with 'r'")
 	}
 }
 
