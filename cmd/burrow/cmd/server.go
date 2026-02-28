@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -417,11 +418,36 @@ func handleRemoteTunnelStream(stream net.Conn) {
 	}
 	defer conn.Close()
 
+	// Tune dialed connection.
+	if tc, ok := conn.(*net.TCPConn); ok {
+		_ = tc.SetNoDelay(true)
+		_ = tc.SetReadBuffer(4 * 1024 * 1024)
+		_ = tc.SetWriteBuffer(4 * 1024 * 1024)
+	}
+
 	fmt.Printf("[*] Remote tunnel: relaying to %s\n", remoteAddr)
 
 	// Bidirectional relay between yamux stream and local connection
 	done := make(chan struct{}, 2)
-	go func() { io.Copy(conn, stream); done <- struct{}{} }()
-	go func() { io.Copy(stream, conn); done <- struct{}{} }()
+	go func() {
+		bp := srvRelayPool.Get().(*[]byte)
+		io.CopyBuffer(conn, stream, *bp)
+		srvRelayPool.Put(bp)
+		done <- struct{}{}
+	}()
+	go func() {
+		bp := srvRelayPool.Get().(*[]byte)
+		io.CopyBuffer(stream, conn, *bp)
+		srvRelayPool.Put(bp)
+		done <- struct{}{}
+	}()
 	<-done
+}
+
+// srvRelayPool pools 256KB buffers for bidirectional relay.
+var srvRelayPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 256*1024)
+		return &b
+	},
 }

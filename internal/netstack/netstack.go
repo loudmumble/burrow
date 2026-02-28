@@ -87,6 +87,9 @@ func New(opts Opts) (*Stack, error) {
 	if opts.MTU == 0 {
 		opts.MTU = 1500
 	}
+	if opts.TCPBufSize == 0 {
+		opts.TCPBufSize = 4 * 1024 * 1024 // 4MB receive window for high throughput
+	}
 	if opts.MaxInFlight == 0 {
 		opts.MaxInFlight = 4096
 	}
@@ -140,8 +143,8 @@ func New(opts Opts) (*Stack, error) {
 	ns.SetForwardingDefaultAndAllNICs(ipv4.ProtocolNumber, false)
 	ns.SetForwardingDefaultAndAllNICs(ipv6.ProtocolNumber, false)
 
-	// Disable TCP SACK for broad compatibility.
-	sackOpt := tcpip.TCPSACKEnabled(false)
+	// Enable TCP SACK for better loss recovery and throughput.
+	sackOpt := tcpip.TCPSACKEnabled(true)
 	ns.SetTransportProtocolOption(tcp.ProtocolNumber, &sackOpt)
 
 	ctx, cancel := context.WithCancel(context.Background())

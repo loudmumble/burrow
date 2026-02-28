@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"sync"
 	"syscall"
 	"time"
 
@@ -441,6 +442,14 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 	}
 }
 
+// agentRelayPool pools 256KB relay buffers to avoid per-connection allocations.
+var agentRelayPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 256*1024)
+		return &b
+	},
+}
+
 func acceptAndRelay(ctx context.Context, ln net.Listener, forwardAddr string) {
 	go func() {
 		<-ctx.Done()
@@ -461,9 +470,24 @@ func acceptAndRelay(ctx context.Context, ln net.Listener, forwardAddr string) {
 				return
 			}
 			defer remote.Close()
+			if tc, ok := remote.(*net.TCPConn); ok {
+				_ = tc.SetNoDelay(true)
+				_ = tc.SetReadBuffer(4 * 1024 * 1024)
+				_ = tc.SetWriteBuffer(4 * 1024 * 1024)
+			}
 			done := make(chan struct{}, 2)
-			go func() { io.Copy(remote, c); done <- struct{}{} }()
-			go func() { io.Copy(c, remote); done <- struct{}{} }()
+			go func() {
+				bp := agentRelayPool.Get().(*[]byte)
+				io.CopyBuffer(remote, c, *bp)
+				agentRelayPool.Put(bp)
+				done <- struct{}{}
+			}()
+			go func() {
+				bp := agentRelayPool.Get().(*[]byte)
+				io.CopyBuffer(c, remote, *bp)
+				agentRelayPool.Put(bp)
+				done <- struct{}{}
+			}()
 			<-done
 		}(conn)
 	}
@@ -558,7 +582,17 @@ func remoteTunnelRelay(conn net.Conn, sess *mux.Session, remoteAddr string) {
 
 	// Bidirectional relay between incoming connection and yamux stream
 	done := make(chan struct{}, 2)
-	go func() { io.Copy(stream, conn); done <- struct{}{} }()
-	go func() { io.Copy(conn, stream); done <- struct{}{} }()
+	go func() {
+		bp := agentRelayPool.Get().(*[]byte)
+		io.CopyBuffer(stream, conn, *bp)
+		agentRelayPool.Put(bp)
+		done <- struct{}{}
+	}()
+	go func() {
+		bp := agentRelayPool.Get().(*[]byte)
+		io.CopyBuffer(conn, stream, *bp)
+		agentRelayPool.Put(bp)
+		done <- struct{}{}
+	}()
 	<-done
 }

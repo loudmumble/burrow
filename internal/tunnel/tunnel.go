@@ -153,6 +153,13 @@ func (t *Tunnel) acceptLoop(ctx context.Context) {
 func (t *Tunnel) handleConn(ctx context.Context, local net.Conn) {
 	defer local.Close()
 
+	// Tune accepted connection.
+	if tc, ok := local.(*net.TCPConn); ok {
+		_ = tc.SetNoDelay(true)
+		_ = tc.SetReadBuffer(4 * 1024 * 1024)
+		_ = tc.SetWriteBuffer(4 * 1024 * 1024)
+	}
+
 	dialer := net.Dialer{Timeout: t.dialTimeout}
 	remote, err := dialer.DialContext(ctx, "tcp", t.RemoteAddr)
 	if err != nil {
@@ -160,6 +167,13 @@ func (t *Tunnel) handleConn(ctx context.Context, local net.Conn) {
 		return
 	}
 	defer remote.Close()
+
+	// Tune dialed connection.
+	if tc, ok := remote.(*net.TCPConn); ok {
+		_ = tc.SetNoDelay(true)
+		_ = tc.SetReadBuffer(4 * 1024 * 1024)
+		_ = tc.SetWriteBuffer(4 * 1024 * 1024)
+	}
 
 	t.mu.Lock()
 	t.conns = append(t.conns, local, remote)
@@ -310,12 +324,26 @@ func (rt *ReverseTunnel) acceptLoop(ctx context.Context, ln net.Listener) {
 func (rt *ReverseTunnel) handleIncoming(ctx context.Context, incoming net.Conn) {
 	defer incoming.Close()
 
+	// Tune accepted connection.
+	if tc, ok := incoming.(*net.TCPConn); ok {
+		_ = tc.SetNoDelay(true)
+		_ = tc.SetReadBuffer(4 * 1024 * 1024)
+		_ = tc.SetWriteBuffer(4 * 1024 * 1024)
+	}
+
 	target, err := net.DialTimeout("tcp", rt.config.LocalTarget, 10*time.Second)
 	if err != nil {
 		rt.logger.Printf("[reverse] dial %s failed: %v", rt.config.LocalTarget, err)
 		return
 	}
 	defer target.Close()
+
+	// Tune dialed connection.
+	if tc, ok := target.(*net.TCPConn); ok {
+		_ = tc.SetNoDelay(true)
+		_ = tc.SetReadBuffer(4 * 1024 * 1024)
+		_ = tc.SetWriteBuffer(4 * 1024 * 1024)
+	}
 
 	var bytesIn, bytesOut atomic.Int64
 	relay(incoming, target, &bytesIn, &bytesOut)
@@ -432,13 +460,26 @@ func (rt *ReverseTunnel) Addr() string {
 	return ""
 }
 
+// relayBufSize is the buffer size for bidirectional relay (256KB for throughput).
+const relayBufSize = 256 * 1024
+
+// relayBufPool pools relay buffers to avoid per-connection allocations.
+var relayBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, relayBufSize)
+		return &b
+	},
+}
+
 // relay performs bidirectional copy between two connections.
 func relay(a, b net.Conn, bytesAB, bytesBA *atomic.Int64) {
 	done := make(chan struct{}, 2)
 
 	cp := func(dst, src net.Conn, counter *atomic.Int64) {
 		defer func() { done <- struct{}{} }()
-		n, _ := io.Copy(dst, src)
+		bp := relayBufPool.Get().(*[]byte)
+		n, _ := io.CopyBuffer(dst, src, *bp)
+		relayBufPool.Put(bp)
 		if counter != nil {
 			counter.Add(n)
 		}
