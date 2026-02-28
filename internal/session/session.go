@@ -12,8 +12,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
-	"strings"
 	"sync"
 	"time"
 
@@ -483,41 +481,34 @@ func (s *Server) Stop() error {
 
 // --- TUN mode methods ---
 
-// subnetAlreadyRouted checks whether the given CIDR (e.g. "10.10.155.0/24") is
-// already reachable through a non-TUN interface. This prevents routing loops:
-// if the agent is connected over SSH through 10.10.155.x, blindly adding a route
-// for 10.10.155.0/24 via burrow0 would capture the C2 traffic and loop it.
-func subnetAlreadyRouted(cidr string, tunName string) bool {
-	// Parse the CIDR to get a representative IP (network + 1).
-	_, ipNet, err := net.ParseCIDR(cidr)
+// subnetAlreadyRouted checks whether the server itself has a local IP address
+// inside the given CIDR. If the server has an IP in 10.10.155.0/24 and we add
+// a route for that subnet through burrow0, we'd hijack the C2 path (e.g. SSH
+// tunnel to the agent) and create a routing loop that kills the session.
+//
+// The previous approach used `ip route get` but that's defeated by the kernel's
+// default route — every destination appears routable via eth0, so ALL subnets
+// get skipped and no TUN routes are added at all.
+func subnetAlreadyRouted(cidr string) bool {
+	_, targetNet, err := net.ParseCIDR(cidr)
 	if err != nil {
 		return false
 	}
-	// Compute first usable IP in the subnet (e.g. 10.10.155.1).
-	ip := make(net.IP, len(ipNet.IP))
-	copy(ip, ipNet.IP)
-	ip[len(ip)-1] |= 1
-
-	// Ask the kernel how it would route a packet to this IP.
-	out, err := exec.Command("ip", "route", "get", ip.String()).CombinedOutput()
+	addrs, err := net.InterfaceAddrs()
 	if err != nil {
-		// If we can't determine, be safe and skip (don't add the route).
+		// Can't enumerate interfaces — be safe and skip this route.
 		return true
 	}
-	// Output looks like: "10.10.155.1 dev eth0 src 10.10.155.5 uid 0"
-	// If the existing route uses a device OTHER than our TUN, the subnet is
-	// already reachable and we must not hijack it.
-	line := string(out)
-	if strings.Contains(line, "dev ") {
-		parts := strings.Fields(line)
-		for i, p := range parts {
-			if p == "dev" && i+1 < len(parts) {
-				dev := parts[i+1]
-				if dev != tunName {
-					return true // already routed via another interface
-				}
-				return false // routed via our TUN, not a conflict
-			}
+	for _, addr := range addrs {
+		ipNet, ok := addr.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		if ipNet.IP.IsLoopback() {
+			continue
+		}
+		if targetNet.Contains(ipNet.IP) {
+			return true
 		}
 	}
 	return false
@@ -607,11 +598,10 @@ func (m *Manager) StartTun(sessionID string) error {
 			continue
 		}
 		cidr := fmt.Sprintf("%d.%d.%d.0/24", ip4[0], ip4[1], ip4[2])
-		// Safety check: do NOT add a route if this subnet is already reachable
-		// via a non-TUN interface. This prevents routing loops where the C2
-		// connection (e.g. SSH tunnel to the agent) gets captured by the TUN
-		// route and loops back through itself.
-		if subnetAlreadyRouted(cidr, iface.Name) {
+		// Safety check: do NOT add a route if the SERVER has a local IP in
+		// this subnet. If we do, we'd hijack the C2 path (e.g. SSH tunnel
+		// to the agent) and create a routing loop that kills the session.
+		if subnetAlreadyRouted(cidr) {
 			fmt.Printf("[*] TUN auto-route: SKIPPING %s (already routed, would cause loop)\n", cidr)
 			continue
 		}
