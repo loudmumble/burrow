@@ -549,8 +549,10 @@ func (m *Manager) StartTun(sessionID string) error {
 	go m.tunRelayFromStream(tunCtx, iface, ac)
 
 	// Re-apply kernel routes for any routes already tracked on this session.
+	// Use remove-before-add to clear any stale entries from a previous TUN interface.
 	ac.mu.RLock()
 	for cidr := range ac.routes {
+		_ = iface.RemoveRoute(cidr) // ignore error if route doesn't exist yet
 		if err := iface.AddRoute(cidr); err != nil {
 			fmt.Fprintf(os.Stderr, "[!] TUN re-add route %s: %v\n", cidr, err)
 		}
@@ -626,10 +628,15 @@ func (m *Manager) HandleTunAck(sessionID, errStr string) {
 		case ch <- fmt.Errorf("%s", errStr):
 		default:
 		}
+	} else {
+		// Signal success directly instead of relying solely on HandleDataStream,
+		// which can race if the data stream arrives before tunReady is stored.
+		select {
+		case ch <- nil:
+		default:
+		}
 	}
-	// Success ack is signaled by HandleDataStream
 }
-
 // HandleDataStream stores the yamux data stream opened by the agent for TUN packets.
 func (m *Manager) HandleDataStream(sessionID string, stream net.Conn) {
 	ac := m.getConn(sessionID)

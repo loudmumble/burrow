@@ -525,6 +525,7 @@ func tunAgentRelay(ctx context.Context, stream net.Conn, ns *netstack.Stack) {
 		protocol.PutPacketBuf(pkt)
 			return
 		}
+		protocol.PutPacketBuf(pkt)
 	}
 }
 

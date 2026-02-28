@@ -41,7 +41,7 @@ const (
 	channelSize = 2048
 
 	// tcpDialTimeout is how long to wait when dialing a real TCP connection.
-	tcpDialTimeout = 5 * time.Second
+	tcpDialTimeout = 15 * time.Second
 
 	// udpDialTimeout is how long to wait when dialing a real UDP connection.
 	udpDialTimeout = 5 * time.Second
@@ -325,9 +325,13 @@ func relayTCP(a, b net.Conn) {
 	done := make(chan struct{})
 	go func() {
 		relay.CopyBuffered(b, a)
+		// Signal the other direction to unblock by closing a's read side.
+		a.Close()
 		close(done)
 	}()
 	relay.CopyBuffered(a, b)
+	// Signal the goroutine to unblock by closing b's read side.
+	b.Close()
 	<-done
 }
 
