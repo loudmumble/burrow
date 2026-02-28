@@ -548,6 +548,15 @@ func (m *Manager) StartTun(sessionID string) error {
 	go m.tunRelayToStream(tunCtx, iface, ac)
 	go m.tunRelayFromStream(tunCtx, iface, ac)
 
+	// Re-apply kernel routes for any routes already tracked on this session.
+	ac.mu.RLock()
+	for cidr := range ac.routes {
+		if err := iface.AddRoute(cidr); err != nil {
+			fmt.Fprintf(os.Stderr, "[!] TUN re-add route %s: %v\n", cidr, err)
+		}
+	}
+	ac.mu.RUnlock()
+
 	fmt.Printf("[*] TUN active on session %s — add routes with 'route add <cidr>'\n", sessionID)
 
 	return nil
@@ -693,10 +702,8 @@ func (m *Manager) tunRelayFromStream(ctx context.Context, iface *tun.Interface, 
 		return
 	}
 	for {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return
-		default:
 		}
 		pkt, err := protocol.ReadRawPacket(stream)
 		if err != nil {
