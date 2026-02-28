@@ -887,7 +887,7 @@ button, [role="button"], input[type="submit"] {
   background: var(--error-bg) !important;
   border-bottom: 1px solid var(--error-border) !important;
   padding: 8px 24px !important;
-  display: flex !important;
+  display: flex;
   align-items: center !important;
   gap: 14px !important;
   flex-shrink: 0;
