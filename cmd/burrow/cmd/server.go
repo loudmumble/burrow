@@ -187,7 +187,11 @@ func runServer(cmd *cobra.Command, _ []string) {
 	if tuiEnabled {
 		time.Sleep(200 * time.Millisecond)
 		apiURL := fmt.Sprintf("%s://%s", scheme, webAddr)
-		if err := RunTUI(apiURL); err != nil {
+		var webuiURL string
+		if webuiEnabled {
+			webuiURL = fmt.Sprintf("%s://%s/", scheme, webuiAddr)
+		}
+		if err := RunTUI(apiURL, webuiURL); err != nil {
 			fmt.Fprintf(os.Stderr, "[!] TUI error: %v\n", err)
 		}
 		fmt.Println("\n[*] TUI exited, shutting down...")

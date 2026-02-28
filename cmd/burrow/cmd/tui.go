@@ -83,6 +83,7 @@ const (
 
 type tuiModel struct {
 	apiURL      string
+	webuiURL    string
 	apiToken    string
 	client      *http.Client
 	sessions    []tuiSessionInfo
@@ -570,9 +571,11 @@ func (m tuiModel) View() string {
 
 func (m tuiModel) viewSessions(b *strings.Builder) {
 	b.WriteString(tuiTitleStyle.Render("  BURROW Dashboard") + "\n")
+	if m.webuiURL != "" {
+		b.WriteString(tuiDimStyle.Render(fmt.Sprintf("  WebUI: %s", m.webuiURL)) + "\n")
+	}
 	b.WriteString(tuiDimStyle.Render(fmt.Sprintf("  %s  |  %d session(s)  |  auto-refresh 5s",
 		m.apiURL, len(m.sessions))) + "\n\n")
-
 	if m.err != nil {
 		b.WriteString(tuiErrorStyle.Render("  Error: "+m.err.Error()) + "\n\n")
 	}
@@ -801,10 +804,11 @@ func tuiTruncate(s string, max int) string {
 
 // RunTUI launches the interactive TUI dashboard, connecting to the given API URL.
 // It blocks until the user exits the TUI.
-func RunTUI(apiURL string) error {
+func RunTUI(apiURL, webuiURL string) error {
 	m := tuiModel{
-		apiURL: strings.TrimRight(apiURL, "/"),
-		client: tuiNewHTTPClient(),
+		apiURL:   strings.TrimRight(apiURL, "/"),
+		webuiURL: webuiURL,
+		client:   tuiNewHTTPClient(),
 	}
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
