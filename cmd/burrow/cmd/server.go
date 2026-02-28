@@ -41,6 +41,7 @@ Examples:
   burrow server --webui
   burrow server --webui 0.0.0.0:9090
   burrow server --mcp-api
+  burrow server --tui
   burrow server --transport ws --listen 0.0.0.0:443`,
 	Run: runServer,
 }
@@ -56,7 +57,8 @@ func init() {
 	serverCmd.Flags().String("webui", "", "Enable WebUI dashboard (default: 0.0.0.0:9090)")
 	serverCmd.Flags().Lookup("webui").NoOptDefVal = "0.0.0.0:9090"
 	serverCmd.Flags().Bool("no-tls", false, "Disable TLS (use plain TCP)")
-	serverCmd.Flags().StringP("transport", "t", "raw", "Transport protocol (raw, ws, dns, icmp)")
+	serverCmd.Flags().StringP("transport", "t", "raw", "Transport protocol (raw, ws, dns, icmp, http)")
+	serverCmd.Flags().Bool("tui", false, "Launch interactive TUI dashboard")
 }
 
 func runServer(cmd *cobra.Command, _ []string) {
@@ -66,6 +68,7 @@ func runServer(cmd *cobra.Command, _ []string) {
 	enableAPI, _ := cmd.Flags().GetBool("mcp-api")
 	apiToken, _ := cmd.Flags().GetString("api-token")
 	webuiAddr, _ := cmd.Flags().GetString("webui")
+	tuiEnabled, _ := cmd.Flags().GetBool("tui")
 	noTLS, _ := cmd.Flags().GetBool("no-tls")
 	transportName, _ := cmd.Flags().GetString("transport")
 
@@ -135,8 +138,18 @@ func runServer(cmd *cobra.Command, _ []string) {
 		}
 	}()
 
-	if enableAPI || webuiEnabled {
-		if apiToken == "" {
+	webAddr := "127.0.0.1:9091"
+	if webuiEnabled {
+		webAddr = webuiAddr
+	}
+
+	scheme := "http"
+	if tlsCfg != nil {
+		scheme = "https"
+	}
+
+	if enableAPI || webuiEnabled || tuiEnabled {
+		if enableAPI && apiToken == "" {
 			b := make([]byte, 16)
 			if _, err := rand.Read(b); err != nil {
 				fmt.Fprintf(os.Stderr, "[!] Failed to generate API token: %v\n", err)
@@ -145,31 +158,24 @@ func runServer(cmd *cobra.Command, _ []string) {
 			apiToken = hex.EncodeToString(b)
 		}
 
-		addr := "127.0.0.1:9091"
-		if webuiEnabled {
-			addr = webuiAddr
+		if enableAPI {
+			fmt.Printf("\n[!] ========================================\n")
+			if webuiEnabled {
+				fmt.Printf("[!] WebUI & API ENABLED\n")
+				fmt.Printf("[!] URL: %s://%s/\n", scheme, webAddr)
+			} else {
+				fmt.Printf("[!] MCP API ENABLED\n")
+				fmt.Printf("[!] Endpoint: %s://%s/api\n", scheme, webAddr)
+			}
+			fmt.Printf("[!] API Token: %s\n", apiToken)
+			fmt.Printf("[!] Keep this token secret. It is required to interact with the API.\n")
+			fmt.Printf("[!] ========================================\n\n")
+		} else if webuiEnabled {
+			fmt.Printf("\n[*] WebUI: %s://%s/\n\n", scheme, webAddr)
 		}
-
-		scheme := "http"
-		if tlsCfg != nil {
-			scheme = "https"
-		}
-
-		fmt.Printf("\n[!] ========================================\n")
-		if webuiEnabled {
-			fmt.Printf("[!] WebUI & API ENABLED\n")
-			fmt.Printf("[!] URL: %s://%s/?token=%s\n", scheme, addr, apiToken)
-		} else {
-			fmt.Printf("[!] MCP API ENABLED\n")
-			fmt.Printf("[!] Endpoint: %s://%s/api\n", scheme, addr)
-		}
-		fmt.Printf("[!] API Token: %s\n", apiToken)
-		fmt.Printf("[!] Keep this token secret. It is required to interact with the API.\n")
-		fmt.Printf("[!] ========================================\n\n")
 
 		events := web.NewEventBus()
-		// Always enable API if this block is reached. The web server handles serving static files conditionally based on webuiEnabled.
-		webSrv := web.NewServer(addr, mgr, events, apiToken, true, tlsCfg, webuiEnabled)
+		webSrv := web.NewServer(webAddr, mgr, events, apiToken, true, tlsCfg, webuiEnabled)
 		go func() {
 			if err := webSrv.Start(ctx); err != nil {
 				fmt.Fprintf(os.Stderr, "[!] Web server error: %v\n", err)
@@ -178,12 +184,21 @@ func runServer(cmd *cobra.Command, _ []string) {
 		defer webSrv.Stop()
 	}
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	<-sigChan
-
-	fmt.Println("\n[*] Shutting down...")
-	cancel()
+	if tuiEnabled {
+		time.Sleep(200 * time.Millisecond)
+		apiURL := fmt.Sprintf("%s://%s", scheme, webAddr)
+		if err := RunTUI(apiURL); err != nil {
+			fmt.Fprintf(os.Stderr, "[!] TUI error: %v\n", err)
+		}
+		fmt.Println("\n[*] TUI exited, shutting down...")
+		cancel()
+	} else {
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		<-sigChan
+		fmt.Println("\n[*] Shutting down...")
+		cancel()
+	}
 }
 
 func handleAgentConn(conn net.Conn, mgr *session.Manager) {

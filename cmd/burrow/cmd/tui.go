@@ -12,7 +12,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/spf13/cobra"
 )
 
 // -- Styles --
@@ -800,42 +799,14 @@ func tuiTruncate(s string, max int) string {
 	return s[:max-3] + "..."
 }
 
-// -- Cobra command --
-
-var tuiCmd = &cobra.Command{
-	Use:   "tui",
-	Short: "Launch interactive TUI dashboard",
-	Long: `Launch an interactive terminal UI for managing Burrow sessions, tunnels, and routes.
-
-The TUI connects to Burrow's REST API (the same API used by the WebUI dashboard)
-and provides a keyboard-driven interface for monitoring and managing sessions.
-
-Controls:
-  Sessions view:   ↑/k up, ↓/j down, enter select, r refresh, q quit
-  Detail view:     tab switch tunnels/routes, t add tunnel, r add route, d delete, esc back
-  Form view:       tab/↓ next field, shift+tab/↑ prev field, enter submit, esc cancel
-
-Examples:
-  burrow tui
-  burrow tui --api-url https://server:9090 --token <api-token>`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		apiURL, _ := cmd.Flags().GetString("api-url")
-		apiToken, _ := cmd.Flags().GetString("token")
-
-		m := tuiModel{
-			apiURL:   strings.TrimRight(apiURL, "/"),
-			apiToken: apiToken,
-			client:   tuiNewHTTPClient(),
-		}
-
-		p := tea.NewProgram(m, tea.WithAltScreen())
-		_, err := p.Run()
-		return err
-	},
-}
-
-func init() {
-	tuiCmd.Flags().String("api-url", "https://localhost:9090", "Burrow API URL")
-	tuiCmd.Flags().String("token", "", "API authentication token")
-	rootCmd.AddCommand(tuiCmd)
+// RunTUI launches the interactive TUI dashboard, connecting to the given API URL.
+// It blocks until the user exits the TUI.
+func RunTUI(apiURL string) error {
+	m := tuiModel{
+		apiURL: strings.TrimRight(apiURL, "/"),
+		client: tuiNewHTTPClient(),
+	}
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	_, err := p.Run()
+	return err
 }
