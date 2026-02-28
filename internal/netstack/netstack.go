@@ -148,6 +148,23 @@ func New(opts Opts) (*Stack, error) {
 	sackOpt := tcpip.TCPSACKEnabled(true)
 	ns.SetTransportProtocolOption(tcp.ProtocolNumber, &sackOpt)
 
+	// Set TCP send buffer range to match receive buffer for symmetric throughput.
+	// Default ~208KB is too small for RDP activation bursts (server→client).
+	sndBufOpt := tcpip.TCPSendBufferSizeRangeOption{
+		Min:     65536,
+		Default: 4 * 1024 * 1024,
+		Max:     4 * 1024 * 1024,
+	}
+	ns.SetTransportProtocolOption(tcp.ProtocolNumber, &sndBufOpt)
+
+	// Set stack-level receive buffer range (supplements the forwarder rcvWnd).
+	rcvBufOpt := tcpip.TCPReceiveBufferSizeRangeOption{
+		Min:     65536,
+		Default: 4 * 1024 * 1024,
+		Max:     4 * 1024 * 1024,
+	}
+	ns.SetTransportProtocolOption(tcp.ProtocolNumber, &rcvBufOpt)
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &Stack{
@@ -252,6 +269,11 @@ func (s *Stack) handleTCP(req *tcp.ForwarderRequest) {
 		return
 	}
 	req.Complete(false)
+	// Disable Nagle's algorithm on the gvisor endpoint. Critical for relay:
+	// Nagle + delayed ACKs across the tunnel causes sub-MSS segments to stall
+	// ~200ms each, killing RDP activation (50KB = ~34 segments × 200ms > 16s timeout).
+	// relay.TuneConn only handles *net.TCPConn; this is a gonet.TCPConn.
+	ep.SocketOptions().SetDelayOption(false)
 
 	netstackConn := gonet.NewTCPConn(&wq, ep)
 

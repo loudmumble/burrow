@@ -4,7 +4,7 @@ GO        ?= go
 MODULE    := github.com/loudmumble/burrow/cmd/burrow/cmd
 BINARY    := burrow
 BUILD_DIR := build
-VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "3.0.0")
+VERSION   ?= $(shell git describe --tags --always 2>/dev/null || echo "3.0.0")
 LDFLAGS   := -s -w -X $(MODULE).version=$(VERSION)
 
 PLATFORMS := linux/amd64 linux/arm64 windows/amd64 darwin/amd64 darwin/arm64
