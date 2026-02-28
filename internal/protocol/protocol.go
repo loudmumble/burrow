@@ -58,6 +58,11 @@ const (
 	// MsgTunStop is sent by the proxy to deactivate TUN mode.
 	MsgTunStop MessageType = 0x52
 
+	// MsgExecRequest is sent by the proxy to request command execution on the agent.
+	MsgExecRequest MessageType = 0x60
+	// MsgExecResponse is sent by the agent with command execution results.
+	MsgExecResponse MessageType = 0x61
+
 	// MsgError carries an error string.
 	MsgError MessageType = 0xFF
 )
@@ -93,6 +98,10 @@ func (m MessageType) String() string {
 		return "TunStartAck"
 	case MsgTunStop:
 		return "TunStop"
+	case MsgExecRequest:
+		return "ExecRequest"
+	case MsgExecResponse:
+		return "ExecResponse"
 	case MsgError:
 		return "Error"
 	default:
@@ -164,6 +173,19 @@ type ListenerAckPayload struct {
 	ID        string `json:"id"`
 	BoundAddr string `json:"bound_addr"`
 	Error     string `json:"error,omitempty"`
+}
+
+// ExecRequestPayload is sent by the proxy to request command execution.
+type ExecRequestPayload struct {
+	ID      string `json:"id"`
+	Command string `json:"command"`
+}
+
+// ExecResponsePayload is sent by the agent with command execution results.
+type ExecResponsePayload struct {
+	ID     string `json:"id"`
+	Output string `json:"output"`
+	Error  string `json:"error,omitempty"`
 }
 
 // --- Wire format ---
@@ -456,6 +478,50 @@ func DecodeTunStartAck(msg *Message) (*TunStartAckPayload, error) {
 // EncodeTunStop creates a TunStop message (empty payload).
 func EncodeTunStop() *Message {
 	return &Message{Type: MsgTunStop}
+}
+
+// --- Exec payload helpers ---
+
+// EncodeExecRequest creates an ExecRequest message from the given payload.
+func EncodeExecRequest(p *ExecRequestPayload) (*Message, error) {
+	data, err := json.Marshal(p)
+	if err != nil {
+		return nil, fmt.Errorf("marshal exec request: %w", err)
+	}
+	return &Message{Type: MsgExecRequest, Payload: data}, nil
+}
+
+// DecodeExecRequest extracts an ExecRequestPayload from a message.
+func DecodeExecRequest(msg *Message) (*ExecRequestPayload, error) {
+	if msg.Type != MsgExecRequest {
+		return nil, fmt.Errorf("%w: got %s, want ExecRequest", ErrTypeMismatch, msg.Type)
+	}
+	var p ExecRequestPayload
+	if err := json.Unmarshal(msg.Payload, &p); err != nil {
+		return nil, fmt.Errorf("unmarshal exec request: %w", err)
+	}
+	return &p, nil
+}
+
+// EncodeExecResponse creates an ExecResponse message from the given payload.
+func EncodeExecResponse(p *ExecResponsePayload) (*Message, error) {
+	data, err := json.Marshal(p)
+	if err != nil {
+		return nil, fmt.Errorf("marshal exec response: %w", err)
+	}
+	return &Message{Type: MsgExecResponse, Payload: data}, nil
+}
+
+// DecodeExecResponse extracts an ExecResponsePayload from a message.
+func DecodeExecResponse(msg *Message) (*ExecResponsePayload, error) {
+	if msg.Type != MsgExecResponse {
+		return nil, fmt.Errorf("%w: got %s, want ExecResponse", ErrTypeMismatch, msg.Type)
+	}
+	var p ExecResponsePayload
+	if err := json.Unmarshal(msg.Payload, &p); err != nil {
+		return nil, fmt.Errorf("unmarshal exec response: %w", err)
+	}
+	return &p, nil
 }
 
 // packetBufPool pools byte slices for raw packet I/O to reduce GC pressure.

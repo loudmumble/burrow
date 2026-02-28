@@ -65,6 +65,7 @@ const (
 	tuiViewAddTunnel
 	tuiViewAddRoute
 	tuiViewConfirmDelete
+	tuiViewExec
 )
 
 type tuiDetailTab int
@@ -121,6 +122,7 @@ type tuiTickMsg time.Time
 type tuiActionDoneMsg string
 type tuiActionErrMsg struct{ err error }
 type tuiSpinnerTickMsg struct{} // unused, spinner handled internally
+type tuiExecResultMsg struct{ output string; err error }
 
 // ── Model ───────────────────────────────────────────────────────────────────
 
@@ -216,6 +218,29 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
+
+	case tuiExecResultMsg:
+		m.spinning = false
+		if msg.output != "" {
+			for _, line := range strings.Split(msg.output, "\n") {
+				line = strings.TrimRight(line, "\r")
+				if line != "" {
+					m.logs.add("  " + line)
+				}
+			}
+		}
+		if msg.err != nil {
+			m.logs.add("exec error: " + msg.err.Error())
+			m.err = msg.err
+			m.errExpiry = time.Now().Add(10 * time.Second)
+		} else if msg.output == "" {
+			m.statusMsg = "Command executed (no output)"
+			m.logs.add("exec: (no output)")
+		} else {
+			m.statusMsg = fmt.Sprintf("Exec done (%d bytes)", len(msg.output))
+		}
+		m.refreshData()
+		return m, nil
 	}
 
 	return m, nil
@@ -284,6 +309,8 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleFormKey(msg, false)
 	case tuiViewConfirmDelete:
 		return m.handleConfirmKey(msg)
+	case tuiViewExec:
+		return m.handleExecKey(msg)
 	}
 	return m, nil
 }
@@ -425,6 +452,17 @@ func (m tuiModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.spinning = true
 			return m, m.doToggleTUN(m.selected, active)
 		}
+	case "x":
+		if m.selected != "" {
+			m.view = tuiViewExec
+			m.inputFields = []string{"Command"}
+			m.inputValues = []string{""}
+			m.inputCursor = 0
+			m.statusMsg = ""
+			m.err = nil
+			m.errExpiry = time.Time{}
+		}
+
 	case "ctrl+r":
 		m.refreshData()
 	}
@@ -661,6 +699,80 @@ func (m *tuiModel) doToggleSOCKS5(sessionID string, active bool) tea.Cmd {
 	}
 }
 
+func (m tuiModel) handleExecKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "esc":
+		m.view = tuiViewSessionDetail
+		m.cursor = 0
+		m.err = nil
+		m.errExpiry = time.Time{}
+		return m, nil
+	case "enter":
+		command := strings.TrimSpace(m.inputValues[0])
+		if command == "" {
+			m.err = fmt.Errorf("command is required")
+			m.errExpiry = time.Now().Add(5 * time.Second)
+			return m, nil
+		}
+		m.view = tuiViewSessionDetail
+		m.spinning = true
+		m.statusMsg = fmt.Sprintf("Executing: %s", tuiTruncate(command, 40))
+		return m, m.doExecCommand(m.selected, command)
+	case "backspace":
+		v := m.inputValues[0]
+		if len(v) > 0 {
+			m.inputValues[0] = v[:len(v)-1]
+		}
+	default:
+		if len(key) == 1 && key[0] >= 32 && key[0] <= 126 {
+			m.inputValues[0] += key
+		}
+	}
+	return m, nil
+}
+
+func (m *tuiModel) doExecCommand(sessionID, command string) tea.Cmd {
+	mgr := m.mgr
+	return func() tea.Msg {
+		output, err := mgr.ExecCommand(sessionID, command)
+		return tuiExecResultMsg{output: output, err: err}
+	}
+}
+
+func (m tuiModel) viewExecForm(b *strings.Builder) {
+	m.renderBanner(b)
+	b.WriteString("\n")
+	b.WriteString(stAccent.Bold(true).Render("  Execute Command"))
+	b.WriteString("\n")
+	b.WriteString(stDim.Render(fmt.Sprintf("  Session: %s", m.selected)) + "\n")
+	b.WriteString(renderSep(m.width) + "\n\n")
+
+	if m.err != nil {
+		b.WriteString(stError.Render("  ✗ "+m.err.Error()) + "\n\n")
+	}
+
+	boxW := min(m.width-8, 60)
+	if boxW < 20 {
+		boxW = 20
+	}
+
+	b.WriteString(stCyan.Bold(true).Render("▸ ") + stCyan.Bold(true).Render("Command:") + "\n")
+	cursor := stCyan.Bold(true).Render("█")
+	value := m.inputValues[0]
+	displayVal := value + cursor
+	padding := max(0, boxW-2-len(value)-1)
+	b.WriteString("    ┌" + strings.Repeat("─", boxW) + "┐\n")
+	b.WriteString("    │ " + displayVal + strings.Repeat(" ", padding) + " │\n")
+	b.WriteString("    └" + strings.Repeat("─", boxW) + "┘\n")
+
+	b.WriteString("\n")
+	b.WriteString(stDim.Render("  Examples: whoami, net stop lanmanserver /y, dir C:\\") + "\n")
+
+	b.WriteString("\n")
+	b.WriteString(renderHelpBar([]string{"enter execute", "esc cancel"}))
+}
+
 // ── View ────────────────────────────────────────────────────────────────────
 
 func (m tuiModel) View() string {
@@ -679,6 +791,8 @@ func (m tuiModel) View() string {
 		m.viewForm(&b, "Add Route")
 	case tuiViewConfirmDelete:
 		m.viewConfirm(&b)
+	case tuiViewExec:
+		m.viewExecForm(&b)
 	}
 
 	// Status bar at bottom
@@ -964,7 +1078,7 @@ func (m tuiModel) viewDetail(b *strings.Builder) {
 	b.WriteString("\n\n")
 	b.WriteString(renderHelpBar([]string{
 		"↑/k up", "↓/j down", "^T TUN", "s SOCKS5", "t tunnel", "r route",
-		"u start", "n stop", "d delete", "tab switch", "esc back",
+		"u start", "n stop", "d delete", "x exec", "tab switch", "esc back",
 	}))
 }
 

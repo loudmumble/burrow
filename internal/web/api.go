@@ -59,6 +59,7 @@ type SessionProvider interface {
 	StartTun(sessionID string) error
 	StopTun(sessionID string) error
 	IsTunActive(sessionID string) bool
+	ExecCommand(sessionID, command string) (string, error)
 }
 
 // apiHandler holds references needed by all REST handlers.
@@ -132,6 +133,7 @@ func registerAPIRoutes(mux *http.ServeMux, provider SessionProvider, apiToken st
 	mux.HandleFunc("DELETE /api/sessions/{id}/tun", h.AuthMiddleware(http.HandlerFunc(h.stopTun)))
 	mux.HandleFunc("POST /api/sessions/{id}/tunnels/{tid}/stop", h.AuthMiddleware(http.HandlerFunc(h.stopTunnel)))
 	mux.HandleFunc("POST /api/sessions/{id}/tunnels/{tid}/start", h.AuthMiddleware(http.HandlerFunc(h.startTunnel)))
+	mux.HandleFunc("POST /api/sessions/{id}/exec", h.AuthMiddleware(http.HandlerFunc(h.execCommand)))
 	}
 
 func (h *apiHandler) listSessions(w http.ResponseWriter, r *http.Request) {
@@ -275,4 +277,27 @@ func (h *apiHandler) startTunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "started", "id": tunnelID})
+}
+
+func (h *apiHandler) execCommand(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	var req struct {
+		Command string `json:"command"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.Command == "" {
+		writeError(w, http.StatusBadRequest, "command is required")
+		return
+	}
+
+	output, err := h.provider.ExecCommand(id, req.Command)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]string{"output": output, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"output": output})
 }

@@ -14,6 +14,8 @@ import (
 	"runtime"
 	"syscall"
 	"time"
+	"os/exec"
+	"strings"
 
 	"github.com/loudmumble/burrow/internal/certgen"
 	"github.com/loudmumble/burrow/internal/mux"
@@ -447,6 +449,33 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 					tunCloseDone = done
 				}
 				fmt.Println("[*] TUN mode stopped")
+
+
+			case protocol.MsgExecRequest:
+				req, err := protocol.DecodeExecRequest(msg)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[!] Bad exec request: %v\n", err)
+					continue
+				}
+				fmt.Printf("[*] Exec request: %s\n", req.Command)
+				go func(id, command string) {
+					resp := &protocol.ExecResponsePayload{ID: id}
+					var cmd *exec.Cmd
+					if runtime.GOOS == "windows" {
+						cmd = exec.Command("cmd", "/C", command)
+					} else {
+						cmd = exec.Command("sh", "-c", command)
+					}
+					out, execErr := cmd.CombinedOutput()
+					resp.Output = strings.TrimRight(string(out), "\r\n")
+					if execErr != nil {
+						resp.Error = execErr.Error()
+					}
+					respMsg, _ := protocol.EncodeExecResponse(resp)
+					if respMsg != nil {
+						protocol.WriteMessage(ctrl, respMsg)
+					}
+				}(req.ID, req.Command)
 
 			case protocol.MsgError:
 				errStr, _ := protocol.DecodeError(msg)

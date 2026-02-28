@@ -353,6 +353,13 @@ func serverCommandLoop(ctrl net.Conn, mgr *session.Manager, sessionID string) er
 					fmt.Printf("[*] Agent TUN mode ready\n")
 					mgr.HandleTunAck(sessionID, "")
 				}
+			case protocol.MsgExecResponse:
+				resp, err := protocol.DecodeExecResponse(msg)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[!] Bad exec response: %v\n", err)
+					continue
+				}
+				mgr.HandleExecResponse(sessionID, resp)
 			default:
 				fmt.Fprintf(os.Stderr, "[!] Unexpected message from agent: %s\n", msg.Type)
 			}

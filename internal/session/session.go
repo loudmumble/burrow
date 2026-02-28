@@ -54,6 +54,7 @@ type AgentConn struct {
 
 	socksServer *proxy.SOCKS5
 	socksCancel context.CancelFunc
+	execResults map[string]chan *protocol.ExecResponsePayload
 }
 
 // Manager tracks all active agent sessions.
@@ -110,22 +111,23 @@ func (m *Manager) Add(info *Info) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sessions[info.ID] = &AgentConn{
-		Info:    info,
-		tunnels: make(map[string]*web.TunnelInfo),
-		routes:  make(map[string]*web.RouteInfo),
+		Info:       info,
+		tunnels:    make(map[string]*web.TunnelInfo),
+		routes:     make(map[string]*web.RouteInfo),
+		execResults: make(map[string]chan *protocol.ExecResponsePayload),
 	}
 }
-
 // AddConn registers a new session with its mux session and control stream.
 func (m *Manager) AddConn(info *Info, muxSess *mux.Session, ctrl net.Conn) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sessions[info.ID] = &AgentConn{
-		Info:    info,
-		Mux:     muxSess,
-		Ctrl:    ctrl,
-		tunnels: make(map[string]*web.TunnelInfo),
-		routes:  make(map[string]*web.RouteInfo),
+		Info:        info,
+		Mux:         muxSess,
+		Ctrl:        ctrl,
+		tunnels:     make(map[string]*web.TunnelInfo),
+		routes:      make(map[string]*web.RouteInfo),
+		execResults: make(map[string]chan *protocol.ExecResponsePayload),
 	}
 }
 
@@ -1001,5 +1003,77 @@ func (m *Manager) tunRelayFromStream(ctx context.Context, iface *tun.Interface, 
 		}
 		ac.bytesIn.Add(int64(len(pkt)))
 		protocol.PutPacketBuf(pkt)
+	}
+}
+
+// --- Command Execution ---
+
+// ExecCommand sends a command to the agent and waits for the response.
+// Returns the command output or an error. Timeout is 60 seconds.
+func (m *Manager) ExecCommand(sessionID, command string) (string, error) {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return "", fmt.Errorf("session %s not found", sessionID)
+	}
+	if ac.Ctrl == nil {
+		return "", fmt.Errorf("session %s has no control stream", sessionID)
+	}
+
+	execID := genID()
+	resultCh := make(chan *protocol.ExecResponsePayload, 1)
+
+	ac.mu.Lock()
+	if ac.execResults == nil {
+		ac.execResults = make(map[string]chan *protocol.ExecResponsePayload)
+	}
+	ac.execResults[execID] = resultCh
+	ac.mu.Unlock()
+
+	defer func() {
+		ac.mu.Lock()
+		delete(ac.execResults, execID)
+		ac.mu.Unlock()
+	}()
+
+	req := &protocol.ExecRequestPayload{
+		ID:      execID,
+		Command: command,
+	}
+	msg, err := protocol.EncodeExecRequest(req)
+	if err != nil {
+		return "", fmt.Errorf("encode exec request: %w", err)
+	}
+	ac.writeMu.Lock()
+	err = protocol.WriteMessage(ac.Ctrl, msg)
+	ac.writeMu.Unlock()
+	if err != nil {
+		return "", fmt.Errorf("send exec request: %w", err)
+	}
+
+	select {
+	case resp := <-resultCh:
+		if resp.Error != "" {
+			return resp.Output, fmt.Errorf("%s", resp.Error)
+		}
+		return resp.Output, nil
+	case <-time.After(60 * time.Second):
+		return "", fmt.Errorf("exec timeout after 60s")
+	}
+}
+
+// HandleExecResponse routes an exec response to the waiting caller.
+func (m *Manager) HandleExecResponse(sessionID string, resp *protocol.ExecResponsePayload) {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return
+	}
+	ac.mu.RLock()
+	ch, ok := ac.execResults[resp.ID]
+	ac.mu.RUnlock()
+	if ok {
+		select {
+		case ch <- resp:
+		default:
+		}
 	}
 }
