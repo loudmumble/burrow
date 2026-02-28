@@ -38,7 +38,7 @@ const (
 	nicID tcpip.NICID = 1
 
 	// channelSize is the outbound packet queue depth for the channel endpoint.
-	channelSize = 2048
+	channelSize = 4096
 
 	// tcpDialTimeout is how long to wait when dialing a real TCP connection.
 	tcpDialTimeout = 15 * time.Second
