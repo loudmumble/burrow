@@ -739,6 +739,21 @@ article {
   border: 1px solid var(--error-border) !important;
 }
 
+.badge-error {
+  color: #ff8c00;
+  background: rgba(255, 140, 0, 0.09);
+  border: 1px solid rgba(255, 140, 0, 0.22) !important;
+}
+
+.tunnel-error {
+  display: block;
+  margin-top: 3px;
+  font-size: 10px;
+  color: #ff8c00;
+  font-family: var(--font-mono);
+  opacity: 0.85;
+}
+
 /* ============================================================
    BUTTONS
    ============================================================ */
@@ -813,6 +828,30 @@ button, [role="button"], input[type="submit"] {
   color: var(--error) !important;
   background: var(--error-bg) !important;
   border-color: var(--error-border) !important;
+}
+
+.btn-toggle {
+  all: unset !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 14px !important;
+  line-height: 1;
+  width: 26px !important;
+  height: 26px !important;
+  border: 1px solid transparent !important;
+  border-radius: 2px !important;
+  color: var(--text-muted) !important;
+  cursor: pointer !important;
+  transition: all var(--t-fast);
+  box-sizing: border-box !important;
+  margin-right: 2px !important;
+}
+
+.btn-toggle:hover {
+  color: var(--accent) !important;
+  background: var(--accent-dim) !important;
+  border-color: var(--border-accent) !important;
 }
 
 /* ============================================================

@@ -151,9 +151,9 @@
               <th>Listen Addr</th>
               <th>Remote Addr</th>
               <th>Proto</th>
+              <th class="col-status">Status</th>
               <th></th>
             </tr>
-          </thead>
           <tbody>
             <template x-for="t in tunnels" :key="t.id">
               <tr>
@@ -161,7 +161,16 @@
                 <td x-text="t.listen_addr"></td>
                 <td x-text="t.remote_addr"></td>
                 <td><span :class="protoBadgeClass(t.protocol)" x-text="t.protocol"></span></td>
+                <td>
+                  <span :class="t.active ? 'badge badge-active' : (t.error ? 'badge badge-error' : 'badge badge-inactive')"
+                        x-text="t.active ? 'ACTIVE' : (t.error ? 'ERROR' : 'STOPPED')"></span>
+                  <span class="tunnel-error" x-show="t.error" x-text="t.error"></span>
+                </td>
                 <td class="col-action">
+                  <button class="btn btn-toggle"
+                          @click="t.active ? stopTunnel(t.id) : startTunnel(t.id)"
+                          :title="t.active ? 'Stop tunnel' : 'Start tunnel'"
+                          x-text="t.active ? '⏸' : '▶'"></button>
                   <button class="btn btn-danger"
                           @click="removeTunnel(t.id)"
                           title="Remove tunnel">🗑</button>

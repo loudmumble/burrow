@@ -108,6 +108,28 @@ func (m *mockProvider) RemoveTunnel(sessionID, tunnelID string) error {
 	return fmt.Errorf("tunnel %s not found", tunnelID)
 }
 
+func (m *mockProvider) StopTunnel(sessionID, tunnelID string) error {
+	tunnels := m.tunnels[sessionID]
+	for _, t := range tunnels {
+		if t.ID == tunnelID {
+			t.Active = false
+			return nil
+		}
+	}
+	return fmt.Errorf("tunnel %s not found", tunnelID)
+}
+
+func (m *mockProvider) StartTunnel(sessionID, tunnelID string) error {
+	tunnels := m.tunnels[sessionID]
+	for _, t := range tunnels {
+		if t.ID == tunnelID {
+			t.Active = true
+			return nil
+		}
+	}
+	return fmt.Errorf("tunnel %s not found", tunnelID)
+}
+
 func (m *mockProvider) AddRoute(sessionID, cidr string) (RouteInfo, error) {
 	r := RouteInfo{CIDR: cidr, SessionID: sessionID, Active: true}
 	m.routes[sessionID] = append(m.routes[sessionID], r)

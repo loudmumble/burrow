@@ -69,6 +69,7 @@ type tuiTunnelInfo struct {
 	RemoteAddr string `json:"remote_addr"`
 	Protocol   string `json:"protocol"`
 	Active     bool   `json:"active"`
+	Error      string `json:"error"`
 }
 
 type tuiRouteInfo struct {
@@ -264,6 +265,40 @@ func tuiDoRemoveTunnel(client *http.Client, apiURL, token, sessionID, tunnelID s
 			return tuiActionErrMsg{fmt.Errorf("delete failed (HTTP %d)", resp.StatusCode)}
 		}
 		return tuiActionDoneMsg(fmt.Sprintf("Tunnel %s removed", tunnelID))
+	}
+}
+
+func tuiDoStopTunnel(client *http.Client, apiURL, token, sessionID, tunnelID string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := tuiRequest(client, http.MethodPost,
+			apiURL+"/api/sessions/"+sessionID+"/tunnels/"+tunnelID+"/stop",
+			token, nil)
+		if err != nil {
+			return tuiActionErrMsg{err}
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			return tuiActionErrMsg{fmt.Errorf("%s", strings.TrimSpace(string(b)))}
+		}
+		return tuiActionDoneMsg(fmt.Sprintf("Tunnel %s stopped", tunnelID))
+	}
+}
+
+func tuiDoStartTunnel(client *http.Client, apiURL, token, sessionID, tunnelID string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := tuiRequest(client, http.MethodPost,
+			apiURL+"/api/sessions/"+sessionID+"/tunnels/"+tunnelID+"/start",
+			token, nil)
+		if err != nil {
+			return tuiActionErrMsg{err}
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			return tuiActionErrMsg{fmt.Errorf("%s", strings.TrimSpace(string(b)))}
+		}
+		return tuiActionDoneMsg(fmt.Sprintf("Tunnel %s started", tunnelID))
 	}
 }
 
@@ -533,6 +568,24 @@ func (m tuiModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		m.errExpiry = time.Time{}
 	case "d", "delete":
+	case "u":
+		if m.detailTab == tuiTabTunnels && m.cursor < len(m.tunnels) {
+			t := m.tunnels[m.cursor]
+			if !t.Active {
+				m.statusMsg = fmt.Sprintf("Starting tunnel %s...", t.ID)
+				return m, tuiDoStartTunnel(m.client, m.apiURL, m.apiToken, m.selected, t.ID)
+			}
+			m.statusMsg = "Tunnel already active"
+		}
+	case "n":
+		if m.detailTab == tuiTabTunnels && m.cursor < len(m.tunnels) {
+			t := m.tunnels[m.cursor]
+			if t.Active {
+				m.statusMsg = fmt.Sprintf("Stopping tunnel %s...", t.ID)
+				return m, tuiDoStopTunnel(m.client, m.apiURL, m.apiToken, m.selected, t.ID)
+			}
+			m.statusMsg = "Tunnel already stopped"
+		}
 		return m.handleDelete()
 	case "ctrl+t":
 		if m.selected != "" {
@@ -917,7 +970,7 @@ func (m tuiModel) viewDetail(b *strings.Builder) {
 
 	b.WriteString("\n\n")
 	b.WriteString(tuiRenderHelpBar([]string{
-		"↑/k up", "↓/j down", "^T toggle TUN", "t tunnel", "r route", "d delete", "^R refresh", "tab switch", "esc back",
+		"↑/k up", "↓/j down", "^T toggle TUN", "t tunnel", "r route", "u start", "n stop", "d delete", "^R refresh", "tab switch", "esc back",
 	}))
 }
 
@@ -935,6 +988,8 @@ func (m tuiModel) viewTunnels(b *strings.Builder) {
 		var statusStr string
 		if t.Active {
 			statusStr = tuiStatusActiveStyle.Render("active")
+		} else if t.Error != "" {
+			statusStr = tuiStatusInactiveStyle.Render("error ")
 		} else {
 			statusStr = tuiStatusInactiveStyle.Render("dead  ")
 		}
@@ -946,12 +1001,17 @@ func (m tuiModel) viewTunnels(b *strings.Builder) {
 			tuiTruncate(t.RemoteAddr, 20),
 			t.Protocol)
 
-		if i == m.cursor {
-			b.WriteString(tuiSelectedStyle.Render("▸ "+cols) + " " + statusStr + "\n")
-		} else {
-			b.WriteString("  " + cols + " " + statusStr + "\n")
+		errSuffix := ""
+		if t.Error != "" {
+			errSuffix = " " + tuiErrorStyle.Render(tuiTruncate(t.Error, 40))
 		}
-	}
+
+		if i == m.cursor {
+			b.WriteString(tuiSelectedStyle.Render("▸ "+cols) + " " + statusStr + errSuffix + "\n")
+		} else {
+			b.WriteString("  " + cols + " " + statusStr + errSuffix + "\n")
+		}
+}
 }
 
 func (m tuiModel) viewRoutes(b *strings.Builder) {

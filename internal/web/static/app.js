@@ -206,6 +206,36 @@ function dashboard() {
       }
     },
 
+    async stopTunnel(id) {
+      if (!this.selected) return;
+      try {
+        const res = await fetch('/api/sessions/' + this.selected + '/tunnels/' + id + '/stop', {
+          method: 'POST',
+          headers: this.authHeaders()
+        });
+        if (this.handleFetchError(res, 'Stop tunnel')) return;
+        this.selectSession(this.selected);
+      } catch (e) {
+        this.showError('Failed to stop tunnel. Check your connection.');
+        console.error('stop tunnel:', e);
+      }
+    },
+
+    async startTunnel(id) {
+      if (!this.selected) return;
+      try {
+        const res = await fetch('/api/sessions/' + this.selected + '/tunnels/' + id + '/start', {
+          method: 'POST',
+          headers: this.authHeaders()
+        });
+        if (this.handleFetchError(res, 'Start tunnel')) return;
+        this.selectSession(this.selected);
+      } catch (e) {
+        this.showError('Failed to start tunnel. Check your connection.');
+        console.error('start tunnel:', e);
+      }
+    },
+
     async addRoute() {
       if (!this.selected) return;
       try {

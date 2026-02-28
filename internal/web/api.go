@@ -30,6 +30,7 @@ type TunnelInfo struct {
 	RemoteAddr string `json:"remote_addr"`
 	Protocol   string `json:"protocol"`
 	Active     bool   `json:"active"`
+	Error      string `json:"error,omitempty"`
 }
 
 // RouteInfo describes a network route for the dashboard.
@@ -48,6 +49,8 @@ type SessionProvider interface {
 	GetRoutes(sessionID string) []RouteInfo
 	AddTunnel(sessionID, direction, listen, remote, proto string) (TunnelInfo, error)
 	RemoveTunnel(sessionID, tunnelID string) error
+	StopTunnel(sessionID, tunnelID string) error
+	StartTunnel(sessionID, tunnelID string) error
 	AddRoute(sessionID, cidr string) (RouteInfo, error)
 	RemoveRoute(sessionID, cidr string) error
 	StartTun(sessionID string) error
@@ -124,6 +127,8 @@ func registerAPIRoutes(mux *http.ServeMux, provider SessionProvider, apiToken st
 	mux.HandleFunc("DELETE /api/sessions/{id}/routes/{cidr}", h.AuthMiddleware(http.HandlerFunc(h.removeRoute)))
 	mux.HandleFunc("POST /api/sessions/{id}/tun", h.AuthMiddleware(http.HandlerFunc(h.startTun)))
 	mux.HandleFunc("DELETE /api/sessions/{id}/tun", h.AuthMiddleware(http.HandlerFunc(h.stopTun)))
+	mux.HandleFunc("POST /api/sessions/{id}/tunnels/{tid}/stop", h.AuthMiddleware(http.HandlerFunc(h.stopTunnel)))
+	mux.HandleFunc("POST /api/sessions/{id}/tunnels/{tid}/start", h.AuthMiddleware(http.HandlerFunc(h.startTunnel)))
 	}
 
 func (h *apiHandler) listSessions(w http.ResponseWriter, r *http.Request) {
@@ -245,4 +250,26 @@ func (h *apiHandler) stopTun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
+}
+
+func (h *apiHandler) stopTunnel(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("id")
+	tunnelID := r.PathValue("tid")
+
+	if err := h.provider.StopTunnel(sessionID, tunnelID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "stopped", "id": tunnelID})
+}
+
+func (h *apiHandler) startTunnel(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("id")
+	tunnelID := r.PathValue("tid")
+
+	if err := h.provider.StartTunnel(sessionID, tunnelID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "started", "id": tunnelID})
 }

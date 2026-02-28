@@ -174,8 +174,10 @@ func (m *Manager) UpdateTunnelStatus(sessionID, tunnelID, boundAddr, errStr stri
 	}
 	if errStr != "" {
 		t.Active = false
+		t.Error = errStr
 	} else {
 		t.Active = true
+		t.Error = ""
 		if boundAddr != "" {
 			t.ListenAddr = boundAddr
 		}
@@ -321,6 +323,89 @@ func (m *Manager) RemoveTunnel(sessionID, tunnelID string) error {
 
 	ac.mu.Lock()
 	delete(ac.tunnels, tunnelID)
+	ac.mu.Unlock()
+
+	return nil
+}
+
+// StopTunnel sends a TunnelClose to the agent and marks the tunnel inactive,
+// but keeps the tunnel definition so it can be restarted later.
+func (m *Manager) StopTunnel(sessionID, tunnelID string) error {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+
+	ac.mu.RLock()
+	t, ok := ac.tunnels[tunnelID]
+	ac.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("tunnel %s not found", tunnelID)
+	}
+	if !t.Active {
+		return fmt.Errorf("tunnel %s already stopped", tunnelID)
+	}
+
+	// Send TunnelClose to agent.
+	if ac.Ctrl != nil {
+		msg := protocol.EncodeTunnelClose(tunnelID)
+		ac.writeMu.Lock()
+		protocol.WriteMessage(ac.Ctrl, msg)
+		ac.writeMu.Unlock()
+	}
+
+	// Mark inactive but keep in map.
+	ac.mu.Lock()
+	t.Active = false
+	ac.mu.Unlock()
+
+	return nil
+}
+
+// StartTunnel re-sends a TunnelRequest to the agent for an existing inactive tunnel.
+func (m *Manager) StartTunnel(sessionID, tunnelID string) error {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+
+	ac.mu.RLock()
+	t, ok := ac.tunnels[tunnelID]
+	ac.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("tunnel %s not found", tunnelID)
+	}
+	if t.Active {
+		return fmt.Errorf("tunnel %s already active", tunnelID)
+	}
+
+	if ac.Ctrl == nil {
+		return fmt.Errorf("session %s has no control stream", sessionID)
+	}
+
+	// Re-send TunnelRequest to agent.
+	req := &protocol.TunnelRequestPayload{
+		ID:         tunnelID,
+		Direction:  t.Direction,
+		ListenAddr: t.ListenAddr,
+		RemoteAddr: t.RemoteAddr,
+		Protocol:   t.Protocol,
+	}
+	msg, err := protocol.EncodeTunnelRequest(req)
+	if err != nil {
+		return fmt.Errorf("encode tunnel request: %w", err)
+	}
+	ac.writeMu.Lock()
+	err = protocol.WriteMessage(ac.Ctrl, msg)
+	ac.writeMu.Unlock()
+	if err != nil {
+		return fmt.Errorf("send tunnel request: %w", err)
+	}
+
+	// Optimistically mark active and clear any previous error (agent ack will confirm/deny).
+	ac.mu.Lock()
+	t.Active = true
+	t.Error = ""
 	ac.mu.Unlock()
 
 	return nil
