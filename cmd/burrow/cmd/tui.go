@@ -28,6 +28,21 @@ var (
 	tuiDimStyle            = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	tuiActiveTabStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Underline(true)
 	tuiInactiveTabStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+
+	// Additional styles for visual polish
+	tuiBannerStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
+	tuiBannerDimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	tuiSeparatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	tuiBwGreenStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("46"))
+	tuiBwYellowStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
+	tuiBwRedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	tuiTunUpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("46")).Bold(true)
+	tuiTunDownStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	tuiBoxBorderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	tuiConfirmStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true)
+	tuiUptimeStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	tuiFormBorder     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	tuiFieldCounter   = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true)
 )
 
 // -- API types matching web.SessionInfo / TunnelInfo / RouteInfo JSON tags --
@@ -71,6 +86,7 @@ const (
 	tuiViewSessionDetail
 	tuiViewAddTunnel
 	tuiViewAddRoute
+	tuiViewConfirmDelete
 )
 
 type tuiDetailTab int
@@ -95,6 +111,7 @@ type tuiModel struct {
 	selected    string // selected session ID
 	selectedIdx int    // cursor position when entering detail (for restoring)
 	err         error
+	errExpiry   time.Time // auto-clear error after this time
 	width       int
 	height      int
 	detailTab   tuiDetailTab
@@ -102,6 +119,8 @@ type tuiModel struct {
 	inputCursor int
 	inputValues []string
 	statusMsg   string
+	confirmType string // "tunnel" or "route" for delete confirmation
+	confirmID   string // tunnel ID or CIDR for delete confirmation
 }
 
 // -- Messages --
@@ -336,7 +355,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiSessionsMsg:
 		m.sessions = []tuiSessionInfo(msg)
-		m.err = nil
+		m.clearExpiredError()
 		if m.view == tuiViewSessions && m.cursor >= len(m.sessions) && len(m.sessions) > 0 {
 			m.cursor = len(m.sessions) - 1
 		}
@@ -362,11 +381,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiErrMsg:
 		m.err = msg.err
+		m.errExpiry = time.Now().Add(10 * time.Second)
 		return m, nil
 
 	case tuiActionDoneMsg:
 		m.statusMsg = string(msg)
 		m.err = nil
+		m.errExpiry = time.Time{}
 		if m.view == tuiViewSessions {
 			return m, tuiFetchSessions(m.client, m.apiURL, m.apiToken)
 		}
@@ -374,10 +395,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiActionErrMsg:
 		m.err = msg.err
+		m.errExpiry = time.Now().Add(10 * time.Second)
 		m.statusMsg = ""
 		return m, nil
 
 	case tuiTickMsg:
+		m.clearExpiredError()
 		cmds := []tea.Cmd{tuiTickCmd()}
 		cmds = append(cmds, tuiFetchSessions(m.client, m.apiURL, m.apiToken))
 		if m.view == tuiViewSessionDetail && m.selected != "" {
@@ -386,6 +409,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	}
 	return m, nil
+}
+
+// clearExpiredError clears the error if it has passed the expiry time.
+func (m *tuiModel) clearExpiredError() {
+	if m.err != nil && !m.errExpiry.IsZero() && time.Now().After(m.errExpiry) {
+		m.err = nil
+		m.errExpiry = time.Time{}
+	}
 }
 
 func (m tuiModel) refreshDetail() tea.Cmd {
@@ -411,6 +442,8 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleFormKey(msg, true)
 	case tuiViewAddRoute:
 		return m.handleFormKey(msg, false)
+	case tuiViewConfirmDelete:
+		return m.handleConfirmKey(msg)
 	}
 	return m, nil
 }
@@ -436,6 +469,7 @@ func (m tuiModel) handleSessionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailTab = tuiTabTunnels
 			m.statusMsg = ""
 			m.err = nil
+			m.errExpiry = time.Time{}
 			return m, m.refreshDetail()
 		}
 	case "t", "T":
@@ -448,6 +482,9 @@ func (m tuiModel) handleSessionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.statusMsg = fmt.Sprintf("%s TUN on %s...", action, s.ID)
 			return m, tuiDoToggleTUN(m.client, m.apiURL, m.apiToken, s.ID, s.TunActive)
 		}
+	case "ctrl+r":
+		m.statusMsg = "Refreshing..."
+		return m, tuiFetchSessions(m.client, m.apiURL, m.apiToken)
 	}
 	return m, nil
 }
@@ -462,6 +499,7 @@ func (m tuiModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.routes = nil
 		m.statusMsg = ""
 		m.err = nil
+		m.errExpiry = time.Time{}
 	case "tab":
 		if m.detailTab == tuiTabTunnels {
 			m.detailTab = tuiTabRoutes
@@ -485,6 +523,7 @@ func (m tuiModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.inputCursor = 1
 		m.statusMsg = ""
 		m.err = nil
+		m.errExpiry = time.Time{}
 	case "r":
 		m.view = tuiViewAddRoute
 		m.inputFields = []string{"CIDR (e.g. 10.0.0.0/24)"}
@@ -492,6 +531,7 @@ func (m tuiModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.inputCursor = 0
 		m.statusMsg = ""
 		m.err = nil
+		m.errExpiry = time.Time{}
 	case "d", "delete":
 		return m.handleDelete()
 	case "T":
@@ -510,6 +550,9 @@ func (m tuiModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.statusMsg = fmt.Sprintf("%s TUN on %s...", action, m.selected)
 			return m, tuiDoToggleTUN(m.client, m.apiURL, m.apiToken, m.selected, active)
 		}
+	case "ctrl+r":
+		m.statusMsg = "Refreshing..."
+		return m, m.refreshDetail()
 	}
 	return m, nil
 }
@@ -523,14 +566,33 @@ func (m tuiModel) detailLen() int {
 
 func (m tuiModel) handleDelete() (tea.Model, tea.Cmd) {
 	if m.detailTab == tuiTabTunnels && m.cursor < len(m.tunnels) {
-		tid := m.tunnels[m.cursor].ID
-		m.statusMsg = ""
-		return m, tuiDoRemoveTunnel(m.client, m.apiURL, m.apiToken, m.selected, tid)
+		m.confirmType = "tunnel"
+		m.confirmID = m.tunnels[m.cursor].ID
+		m.view = tuiViewConfirmDelete
+		return m, nil
 	}
 	if m.detailTab == tuiTabRoutes && m.cursor < len(m.routes) {
-		cidr := m.routes[m.cursor].CIDR
+		m.confirmType = "route"
+		m.confirmID = m.routes[m.cursor].CIDR
+		m.view = tuiViewConfirmDelete
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m tuiModel) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y":
+		m.view = tuiViewSessionDetail
 		m.statusMsg = ""
-		return m, tuiDoRemoveRoute(m.client, m.apiURL, m.apiToken, m.selected, cidr)
+		if m.confirmType == "tunnel" {
+			return m, tuiDoRemoveTunnel(m.client, m.apiURL, m.apiToken, m.selected, m.confirmID)
+		}
+		return m, tuiDoRemoveRoute(m.client, m.apiURL, m.apiToken, m.selected, m.confirmID)
+	case "n", "N", "esc":
+		m.view = tuiViewSessionDetail
+		m.confirmType = ""
+		m.confirmID = ""
 	}
 	return m, nil
 }
@@ -542,6 +604,7 @@ func (m tuiModel) handleFormKey(msg tea.KeyMsg, isTunnel bool) (tea.Model, tea.C
 		m.view = tuiViewSessionDetail
 		m.cursor = 0
 		m.err = nil
+		m.errExpiry = time.Time{}
 		return m, nil
 	case "tab", "down":
 		m.inputCursor = (m.inputCursor + 1) % len(m.inputFields)
@@ -601,6 +664,7 @@ func (m tuiModel) submitTunnel() (tea.Model, tea.Cmd) {
 	proto := strings.TrimSpace(m.inputValues[3])
 	if direction == "" || listen == "" || remote == "" {
 		m.err = fmt.Errorf("direction, listen address, and remote address are required")
+		m.errExpiry = time.Now().Add(10 * time.Second)
 		return m, nil
 	}
 	if proto == "" {
@@ -616,6 +680,7 @@ func (m tuiModel) submitRoute() (tea.Model, tea.Cmd) {
 	cidr := strings.TrimSpace(m.inputValues[0])
 	if cidr == "" {
 		m.err = fmt.Errorf("CIDR is required")
+		m.errExpiry = time.Now().Add(10 * time.Second)
 		return m, nil
 	}
 	m.view = tuiViewSessionDetail
@@ -640,27 +705,71 @@ func (m tuiModel) View() string {
 		m.viewForm(&b, "Add Tunnel")
 	case tuiViewAddRoute:
 		m.viewForm(&b, "Add Route")
+	case tuiViewConfirmDelete:
+		m.viewConfirm(&b)
 	}
 	return b.String()
 }
 
+// tuiRenderBanner renders the top banner box with API info and session count.
+func (m tuiModel) tuiRenderBanner(b *strings.Builder) {
+	innerWidth := min(m.width-4, 60)
+	if innerWidth < 30 {
+		innerWidth = 30
+	}
+	topLine := "┌" + strings.Repeat("─", innerWidth) + "┐"
+	botLine := "└" + strings.Repeat("─", innerWidth) + "┘"
+
+	title := "  BURROW  ─  Tunnel Operations"
+	titlePadded := title + strings.Repeat(" ", max(0, innerWidth-2-len(title)))
+
+	apiInfo := fmt.Sprintf("  API: %s", m.apiURL)
+	sessCount := fmt.Sprintf("%d sessions", len(m.sessions))
+	midSep := "  │  "
+	infoLine := apiInfo + midSep + sessCount
+	if len(infoLine) > innerWidth-2 {
+		infoLine = infoLine[:innerWidth-5] + "..."
+	}
+	infoPadded := infoLine + strings.Repeat(" ", max(0, innerWidth-2-len(infoLine)))
+
+	b.WriteString(tuiBoxBorderStyle.Render(topLine) + "\n")
+	b.WriteString(tuiBoxBorderStyle.Render("│") + tuiBannerStyle.Render(titlePadded) + tuiBoxBorderStyle.Render("│") + "\n")
+	b.WriteString(tuiBoxBorderStyle.Render("│") + tuiBannerDimStyle.Render(infoPadded) + tuiBoxBorderStyle.Render("│") + "\n")
+	b.WriteString(tuiBoxBorderStyle.Render(botLine) + "\n")
+}
+
+// tuiRenderHelpBar renders a structured help bar with │ separators.
+func tuiRenderHelpBar(items []string) string {
+	return tuiHelpStyle.Render("  " + strings.Join(items, " │ "))
+}
+
+// tuiRenderSeparator renders a dim horizontal separator line.
+func tuiRenderSeparator(width int) string {
+	w := min(width-4, 80)
+	if w < 10 {
+		w = 10
+	}
+	return tuiSeparatorStyle.Render("  " + strings.Repeat("─", w))
+}
+
 func (m tuiModel) viewSessions(b *strings.Builder) {
-	b.WriteString(tuiTitleStyle.Render("  BURROW Dashboard") + "\n")
+	m.tuiRenderBanner(b)
 	if m.webuiURL != "" {
 		b.WriteString(tuiDimStyle.Render(fmt.Sprintf("  WebUI: %s", m.webuiURL)) + "\n")
 	}
-	b.WriteString(tuiDimStyle.Render(fmt.Sprintf("  %s  |  %d session(s)  |  auto-refresh 5s",
-		m.apiURL, len(m.sessions))) + "\n\n")
+	b.WriteString("\n")
+
 	if m.err != nil {
-		b.WriteString(tuiErrorStyle.Render("  Error: "+m.err.Error()) + "\n\n")
+		b.WriteString(tuiErrorStyle.Render("  ✗ "+m.err.Error()) + "\n\n")
 	}
 
 	if len(m.sessions) == 0 {
 		b.WriteString(tuiHelpStyle.Render("  No sessions. Waiting for agents to connect...") + "\n")
 	} else {
-		hdr := fmt.Sprintf("  %-18s %-14s %-7s %-20s %-5s %4s %4s %-7s %9s %9s",
-			"ID", "HOSTNAME", "OS", "IPs", "TUN", "T", "R", "STATUS", "IN", "OUT")
+		hdr := fmt.Sprintf("  %-18s %-14s %-7s %-20s %-6s %4s %4s %-7s %9s %9s  %-8s",
+			"ID", "HOSTNAME", "OS", "IPs", "TUN", "T", "R", "STATUS", "IN", "OUT", "UPTIME")
 		b.WriteString(tuiHeaderStyle.Render(hdr) + "\n")
+		b.WriteString(tuiRenderSeparator(m.width) + "\n")
 
 		for i, s := range m.sessions {
 			ips := strings.Join(s.IPs, ",")
@@ -675,9 +784,11 @@ func (m tuiModel) viewSessions(b *strings.Builder) {
 				statusStr = tuiStatusInactiveStyle.Render("dead  ")
 			}
 
-			tunStr := tuiDimStyle.Render("  -  ")
+			var tunStr string
 			if s.TunActive {
-				tunStr = tuiStatusActiveStyle.Render(" \u25cf  ")
+				tunStr = tuiTunUpStyle.Render("TUN UP")
+			} else {
+				tunStr = tuiTunDownStyle.Render("TUN --")
 			}
 
 			cols := fmt.Sprintf("%-18s %-14s %-7s %-20s",
@@ -687,13 +798,16 @@ func (m tuiModel) viewSessions(b *strings.Builder) {
 				ips)
 			nums := fmt.Sprintf(" %4d %4d", s.Tunnels, s.Routes)
 
-			bw := fmt.Sprintf(" %9s %9s",
-				tuiFormatBytes(s.BytesIn), tuiFormatBytes(s.BytesOut))
+			bwIn := tuiColorBytes(s.BytesIn)
+			bwOut := tuiColorBytes(s.BytesOut)
+			bwStr := fmt.Sprintf(" %9s %9s", bwIn, bwOut)
+
+			uptime := "  " + tuiFormatUptime(s.CreatedAt)
 
 			if i == m.cursor {
-				b.WriteString(tuiSelectedStyle.Render("\u25b8 "+cols) + " " + tunStr + tuiSelectedStyle.Render(nums) + " " + statusStr + tuiSelectedStyle.Render(bw) + "\n")
+				b.WriteString(tuiSelectedStyle.Render("▸ "+cols) + " " + tunStr + tuiSelectedStyle.Render(nums) + " " + statusStr + bwStr + tuiUptimeStyle.Render(uptime) + "\n")
 			} else {
-				b.WriteString("  " + cols + " " + tunStr + nums + " " + statusStr + bw + "\n")
+				b.WriteString("  " + cols + " " + tunStr + nums + " " + statusStr + bwStr + tuiUptimeStyle.Render(uptime) + "\n")
 			}
 		}
 	}
@@ -703,7 +817,9 @@ func (m tuiModel) viewSessions(b *strings.Builder) {
 	}
 
 	b.WriteString("\n\n")
-	b.WriteString(tuiHelpStyle.Render("  \u2191/k up  \u2193/j down  enter select  T toggle TUN  q quit"))
+	b.WriteString(tuiRenderHelpBar([]string{
+		"↑/k up", "↓/j down", "enter select", "T toggle TUN", "^R refresh", "q quit",
+	}))
 }
 
 func (m tuiModel) viewDetail(b *strings.Builder) {
@@ -715,9 +831,18 @@ func (m tuiModel) viewDetail(b *strings.Builder) {
 		}
 	}
 
-	b.WriteString(tuiTitleStyle.Render(fmt.Sprintf("  Session: %s", m.selected)) + "\n\n")
+	m.tuiRenderBanner(b)
+	b.WriteString("\n")
 
 	if sess != nil {
+		// Bordered info box for session metadata
+		boxWidth := min(m.width-4, 60)
+		if boxWidth < 30 {
+			boxWidth = 30
+		}
+		topBorder := "  ┌" + strings.Repeat("─", boxWidth) + "┐"
+		botBorder := "  └" + strings.Repeat("─", boxWidth) + "┘"
+
 		var statusStr string
 		if sess.Active {
 			statusStr = tuiStatusActiveStyle.Render("active")
@@ -725,13 +850,40 @@ func (m tuiModel) viewDetail(b *strings.Builder) {
 			statusStr = tuiStatusInactiveStyle.Render("inactive")
 		}
 
-		b.WriteString(fmt.Sprintf("  Hostname:  %s\n", sess.Hostname))
-		b.WriteString(fmt.Sprintf("  OS:        %s\n", sess.OS))
-		b.WriteString(fmt.Sprintf("  IPs:       %s\n", strings.Join(sess.IPs, ", ")))
-		b.WriteString(fmt.Sprintf("  Status:    %s\n", statusStr))
-		b.WriteString(fmt.Sprintf("  Created:   %s\n", sess.CreatedAt))
-		b.WriteString(fmt.Sprintf("  Bytes:     %s in / %s out\n",
-			tuiFormatBytes(sess.BytesIn), tuiFormatBytes(sess.BytesOut)))
+		var tunStatusStr string
+		if sess.TunActive {
+			tunStatusStr = tuiTunUpStyle.Render("TUN UP")
+		} else {
+			tunStatusStr = tuiTunDownStyle.Render("TUN --")
+		}
+
+		uptime := tuiFormatUptime(sess.CreatedAt)
+		bwIn := tuiColorBytes(sess.BytesIn)
+		bwOut := tuiColorBytes(sess.BytesOut)
+
+		infoLines := []string{
+			fmt.Sprintf("  Session:   %s", sess.ID),
+			fmt.Sprintf("  Hostname:  %s", sess.Hostname),
+			fmt.Sprintf("  OS:        %s", sess.OS),
+			fmt.Sprintf("  IPs:       %s", strings.Join(sess.IPs, ", ")),
+		}
+
+		b.WriteString(tuiBoxBorderStyle.Render(topBorder) + "\n")
+		for _, line := range infoLines {
+			padded := line + strings.Repeat(" ", max(0, boxWidth-len(line)))
+			b.WriteString(tuiBoxBorderStyle.Render("  │") + padded + tuiBoxBorderStyle.Render("│") + "\n")
+		}
+		// Status line (rendered separately due to ANSI color codes)
+		statusLine := "  Status:    "
+		b.WriteString(tuiBoxBorderStyle.Render("  │") + statusLine + statusStr + strings.Repeat(" ", max(0, boxWidth-len(statusLine)-len("active   "))) + tunStatusStr + " " + tuiBoxBorderStyle.Render("│") + "\n")
+		// Created + uptime line
+		createdLine := fmt.Sprintf("  Created:   %s (%s ago)", sess.CreatedAt, uptime)
+		createdPad := createdLine + strings.Repeat(" ", max(0, boxWidth-len(createdLine)))
+		b.WriteString(tuiBoxBorderStyle.Render("  │") + createdPad + tuiBoxBorderStyle.Render("│") + "\n")
+		// Bandwidth line
+		bwLabel := "  Bandwidth: "
+		b.WriteString(tuiBoxBorderStyle.Render("  │") + bwLabel + bwIn + " in / " + bwOut + " out" + strings.Repeat(" ", max(0, boxWidth-len(bwLabel)-len(tuiFormatBytes(sess.BytesIn)+" in / "+tuiFormatBytes(sess.BytesOut)+" out"))) + tuiBoxBorderStyle.Render("│") + "\n")
+		b.WriteString(tuiBoxBorderStyle.Render(botBorder) + "\n")
 	} else {
 		b.WriteString(tuiDimStyle.Render("  Session data not available (may have disconnected)") + "\n")
 	}
@@ -748,11 +900,7 @@ func (m tuiModel) viewDetail(b *strings.Builder) {
 	}
 	b.WriteString("  " + tunnelTab + "  " + routeTab + "\n")
 
-	lineWidth := min(m.width-4, 80)
-	if lineWidth < 20 {
-		lineWidth = 20
-	}
-	b.WriteString("  " + strings.Repeat("─", lineWidth) + "\n")
+	b.WriteString(tuiRenderSeparator(m.width) + "\n")
 
 	if m.detailTab == tuiTabTunnels {
 		m.viewTunnels(b)
@@ -761,14 +909,16 @@ func (m tuiModel) viewDetail(b *strings.Builder) {
 	}
 
 	if m.err != nil {
-		b.WriteString("\n" + tuiErrorStyle.Render("  Error: "+m.err.Error()))
+		b.WriteString("\n" + tuiErrorStyle.Render("  ✗ "+m.err.Error()))
 	}
 	if m.statusMsg != "" {
 		b.WriteString("\n" + tuiStatusActiveStyle.Render("  "+m.statusMsg))
 	}
 
 	b.WriteString("\n\n")
-	b.WriteString(tuiHelpStyle.Render("  \u2191/k up  \u2193/j down  T toggle TUN  t tunnel  r route  d delete  tab switch  esc back"))
+	b.WriteString(tuiRenderHelpBar([]string{
+		"↑/k up", "↓/j down", "T toggle TUN", "t tunnel", "r route", "d delete", "^R refresh", "tab switch", "esc back",
+	}))
 }
 
 func (m tuiModel) viewTunnels(b *strings.Builder) {
@@ -829,21 +979,70 @@ func (m tuiModel) viewRoutes(b *strings.Builder) {
 	}
 }
 
+func (m tuiModel) viewConfirm(b *strings.Builder) {
+	m.tuiRenderBanner(b)
+	b.WriteString("\n")
+
+	boxWidth := min(m.width-4, 50)
+	if boxWidth < 30 {
+		boxWidth = 30
+	}
+	topBorder := "  ┌" + strings.Repeat("─", boxWidth) + "┐"
+	botBorder := "  └" + strings.Repeat("─", boxWidth) + "┘"
+
+	idDisplay := m.confirmID
+	if len(idDisplay) > boxWidth-20 {
+		idDisplay = idDisplay[:boxWidth-23] + "..."
+	}
+	prompt := fmt.Sprintf("  Delete %s %s?", m.confirmType, idDisplay)
+	promptPad := prompt + strings.Repeat(" ", max(0, boxWidth-len(prompt)))
+	hint := "  Press y to confirm, n or esc to cancel"
+	hintPad := hint + strings.Repeat(" ", max(0, boxWidth-len(hint)))
+	blankLine := strings.Repeat(" ", boxWidth)
+
+	b.WriteString(topBorder + "\n")
+	b.WriteString(tuiBoxBorderStyle.Render("  │") + blankLine + tuiBoxBorderStyle.Render("│") + "\n")
+	b.WriteString(tuiBoxBorderStyle.Render("  │") + tuiConfirmStyle.Render(promptPad) + tuiBoxBorderStyle.Render("│") + "\n")
+	b.WriteString(tuiBoxBorderStyle.Render("  │") + blankLine + tuiBoxBorderStyle.Render("│") + "\n")
+	b.WriteString(tuiBoxBorderStyle.Render("  │") + tuiDimStyle.Render(hintPad) + tuiBoxBorderStyle.Render("│") + "\n")
+	b.WriteString(tuiBoxBorderStyle.Render("  │") + blankLine + tuiBoxBorderStyle.Render("│") + "\n")
+	b.WriteString(botBorder + "\n")
+
+	b.WriteString("\n")
+	b.WriteString(tuiRenderHelpBar([]string{"y confirm", "n cancel", "esc cancel"}))
+}
+
 func (m tuiModel) viewForm(b *strings.Builder, title string) {
-	b.WriteString(tuiTitleStyle.Render(fmt.Sprintf("  %s", title)) + "\n")
-	b.WriteString(tuiDimStyle.Render(fmt.Sprintf("  Session: %s", m.selected)) + "\n\n")
+	m.tuiRenderBanner(b)
+	b.WriteString("\n")
+	b.WriteString(tuiTitleStyle.Render(fmt.Sprintf("  %s", title)))
+	b.WriteString(tuiFieldCounter.Render(fmt.Sprintf("  (Field %d/%d)", m.inputCursor+1, len(m.inputFields))))
+	b.WriteString("\n")
+	b.WriteString(tuiDimStyle.Render(fmt.Sprintf("  Session: %s", m.selected)) + "\n")
+	b.WriteString(tuiRenderSeparator(m.width) + "\n\n")
 
 	if m.err != nil {
-		b.WriteString(tuiErrorStyle.Render("  Error: "+m.err.Error()) + "\n\n")
+		b.WriteString(tuiErrorStyle.Render("  ✗ "+m.err.Error()) + "\n\n")
 	}
 
 	isTunnelForm := title == "Add Tunnel"
 
+	boxWidth := min(m.width-8, 50)
+	if boxWidth < 20 {
+		boxWidth = 20
+	}
+
 	for i, field := range m.inputFields {
-		label := fmt.Sprintf("%-32s", field+":")
+		label := field + ":"
 		value := m.inputValues[i]
 		isToggle := isTunnelForm && (i == 0 || i == 3)
 		focused := i == m.inputCursor
+
+		if focused {
+			b.WriteString(tuiSelectedStyle.Render("▸ ") + tuiFocusedStyle.Render(label) + "\n")
+		} else {
+			b.WriteString("  " + tuiDimStyle.Render(label) + "\n")
+		}
 
 		if isToggle {
 			var options []string
@@ -856,32 +1055,52 @@ func (m tuiModel) viewForm(b *strings.Builder, title string) {
 			for _, opt := range options {
 				if opt == value {
 					if focused {
-						parts = append(parts, tuiFocusedStyle.Render("["+opt+"]"))
+						parts = append(parts, tuiFocusedStyle.Render(" ["+opt+"] "))
 					} else {
-						parts = append(parts, "["+opt+"]")
+						parts = append(parts, " ["+opt+"] ")
 					}
 				} else {
-					parts = append(parts, tuiDimStyle.Render(" "+opt+" "))
+					parts = append(parts, tuiDimStyle.Render("  "+opt+"  "))
 				}
 			}
-			optStr := strings.Join(parts, " ")
+			optStr := strings.Join(parts, "")
 			if focused {
-				b.WriteString(tuiSelectedStyle.Render("\u25b8 ") + tuiFocusedStyle.Render(label) + " " + optStr + "\n")
+				b.WriteString("    ┌" + strings.Repeat("─", boxWidth) + "┐\n")
+				b.WriteString("    │ " + optStr + strings.Repeat(" ", max(0, boxWidth-1-len(optStr)/2)) + "│\n")
+				b.WriteString("    └" + strings.Repeat("─", boxWidth) + "┘\n")
 			} else {
-				b.WriteString("  " + tuiDimStyle.Render(label) + " " + optStr + "\n")
+				b.WriteString(tuiFormBorder.Render("    ┌"+strings.Repeat("─", boxWidth)+"┐") + "\n")
+				b.WriteString(tuiFormBorder.Render("    │ ") + optStr + tuiFormBorder.Render(strings.Repeat(" ", max(0, boxWidth-1-len(optStr)/2))+"│") + "\n")
+				b.WriteString(tuiFormBorder.Render("    └"+strings.Repeat("─", boxWidth)+"┘") + "\n")
 			}
 		} else {
+			cursor := ""
 			if focused {
-				cursor := tuiFocusedStyle.Render("|")
-				b.WriteString(tuiSelectedStyle.Render("\u25b8 ") + tuiFocusedStyle.Render(label) + " [" + value + cursor + "]\n")
+				cursor = tuiFocusedStyle.Render("█")
+			}
+			displayVal := value + cursor
+			valWidth := len(value)
+			if focused {
+				valWidth++ // for cursor block
+			}
+			padding := max(0, boxWidth-2-valWidth)
+
+			if focused {
+				b.WriteString("    ┌" + strings.Repeat("─", boxWidth) + "┐\n")
+				b.WriteString("    │ " + displayVal + strings.Repeat(" ", padding) + " │\n")
+				b.WriteString("    └" + strings.Repeat("─", boxWidth) + "┘\n")
 			} else {
-				b.WriteString("  " + tuiDimStyle.Render(label) + " [" + value + "]\n")
+				b.WriteString(tuiFormBorder.Render("    ┌"+strings.Repeat("─", boxWidth)+"┐") + "\n")
+				b.WriteString(tuiFormBorder.Render("    │ ") + value + tuiFormBorder.Render(strings.Repeat(" ", padding+1)+"│") + "\n")
+				b.WriteString(tuiFormBorder.Render("    └"+strings.Repeat("─", boxWidth)+"┘") + "\n")
 			}
 		}
+		b.WriteString("\n")
 	}
 
-	b.WriteString("\n")
-	b.WriteString(tuiHelpStyle.Render("  enter submit  tab/\u2193 next  shift+tab/\u2191 prev  space toggle  esc cancel"))
+	b.WriteString(tuiRenderHelpBar([]string{
+		"enter submit", "tab/↓ next", "shift+tab/↑ prev", "space toggle", "esc cancel",
+	}))
 }
 
 // -- Helpers --
@@ -904,15 +1123,61 @@ func tuiFormatBytes(b int64) string {
 	}
 }
 
-func tuiTruncate(s string, max int) string {
-	if len(s) <= max {
+// tuiColorBytes returns the formatted byte string with color based on thresholds.
+// Green < 1MB, Yellow 1-100MB, Red > 100MB.
+func tuiColorBytes(b int64) string {
+	text := tuiFormatBytes(b)
+	const (
+		MB = 1024 * 1024
+	)
+	switch {
+	case b >= 100*MB:
+		return tuiBwRedStyle.Render(text)
+	case b >= MB:
+		return tuiBwYellowStyle.Render(text)
+	default:
+		return tuiBwGreenStyle.Render(text)
+	}
+}
+
+// tuiFormatUptime parses an RFC3339 CreatedAt string and returns human-readable duration.
+// Returns "2h 14m", "3d 5h", "< 1m", etc.
+func tuiFormatUptime(createdAt string) string {
+	t, err := time.Parse(time.RFC3339, createdAt)
+	if err != nil {
+		return "?"
+	}
+	d := time.Since(t)
+	if d < 0 {
+		d = 0
+	}
+
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	minutes := int(d.Minutes()) % 60
+
+	switch {
+	case days > 0:
+		return fmt.Sprintf("%dd %dh", days, hours)
+	case hours > 0:
+		return fmt.Sprintf("%dh %dm", hours, minutes)
+	case minutes > 0:
+		return fmt.Sprintf("%dm", minutes)
+	default:
+		return "< 1m"
+	}
+}
+
+func tuiTruncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
 		return s
 	}
-	if max <= 3 {
-		return s[:max]
+	if maxLen <= 3 {
+		return s[:maxLen]
 	}
-	return s[:max-3] + "..."
+	return s[:maxLen-3] + "..."
 }
+
 
 // RunTUI launches the interactive TUI dashboard, connecting to the given API URL.
 // It blocks until the user exits the TUI.
