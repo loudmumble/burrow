@@ -344,7 +344,7 @@ func (m *Manager) AddTunnel(sessionID, direction, listen, remote, proto string) 
 		ListenAddr: listen,
 		RemoteAddr: remote,
 		Protocol:   proto,
-		Active:     true,
+		Active:     false,
 	}
 	ac.mu.Lock()
 	ac.tunnels[tunnelID] = info
@@ -639,7 +639,20 @@ func (m *Manager) StartTun(sessionID string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("TUN already active on session %s", m.tunSession)
 	}
+	m.tunSession = sessionID // Claim immediately to prevent TOCTOU race
 	m.mu.Unlock()
+
+	// Release claim on any failure below.
+	releaseOnFail := true
+	defer func() {
+		if releaseOnFail {
+			m.mu.Lock()
+			if m.tunSession == sessionID {
+				m.tunSession = ""
+			}
+			m.mu.Unlock()
+		}
+	}()
 
 	ac := m.getConn(sessionID)
 	if ac == nil {
@@ -694,6 +707,7 @@ func (m *Manager) StartTun(sessionID string) error {
 	m.tunSession = sessionID
 	m.tunCancel = tunCancel
 	m.mu.Unlock()
+	releaseOnFail = false
 
 	go m.tunRelayToStream(tunCtx, iface, ac)
 	go m.tunRelayFromStream(tunCtx, iface, ac)
@@ -718,6 +732,10 @@ func (m *Manager) StartTun(sessionID string) error {
 // StopTun deactivates the TUN interface for the given session.
 func (m *Manager) StopTun(sessionID string) error {
 	m.mu.Lock()
+	if m.tunSession == "" {
+		m.mu.Unlock()
+		return nil // Already stopped — idempotent
+	}
 	if m.tunSession != sessionID {
 		m.mu.Unlock()
 		return fmt.Errorf("TUN not active on session %s", sessionID)
@@ -791,6 +809,9 @@ func (m *Manager) HandleDataStream(sessionID string, stream net.Conn) {
 		return
 	}
 	ac.mu.Lock()
+	if ac.tunStream != nil {
+		ac.tunStream.Close() // Close old stream to prevent leak
+	}
 	ac.tunStream = stream
 	ac.tunActive = true
 	ch := ac.tunReady

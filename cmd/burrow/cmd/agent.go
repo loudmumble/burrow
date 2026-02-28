@@ -536,7 +536,7 @@ func tunAgentRelay(ctx context.Context, stream net.Conn, ns *netstack.Stack) {
 			return
 		}
 		if err := protocol.WriteRawPacket(stream, pkt); err != nil {
-		protocol.PutPacketBuf(pkt)
+			protocol.PutPacketBuf(pkt)
 			return
 		}
 		protocol.PutPacketBuf(pkt)

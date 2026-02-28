@@ -268,12 +268,12 @@ func handleAgentConn(conn net.Conn, mgr *session.Manager) {
 
 	// Auto-restore TUN if previous session for this agent had it active.
 	if mgr.WasTunActive(handshake.Hostname) {
-		mgr.ClearTunPrev()
 		go func() {
 			time.Sleep(500 * time.Millisecond) // let data stream acceptor start
 			if err := mgr.StartTun(sessionID); err != nil {
 				fmt.Fprintf(os.Stderr, "[!] TUN auto-restore failed for %s: %v\n", sessionID, err)
 			} else {
+				mgr.ClearTunPrev() // Only clear after successful restore
 				fmt.Printf("[*] TUN auto-restored for reconnected agent %s\n", handshake.Hostname)
 			}
 		}()

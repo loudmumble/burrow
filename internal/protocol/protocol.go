@@ -175,17 +175,15 @@ func WriteMessage(w io.Writer, msg *Message) error {
 		return ErrPayloadTooLarge
 	}
 
-	header := make([]byte, frameHeaderSize)
-	header[0] = byte(msg.Type)
-	binary.BigEndian.PutUint32(header[1:5], uint32(len(msg.Payload)))
+	// Coalesce header + payload into a single write to reduce syscalls/yamux frames.
+	total := frameHeaderSize + len(msg.Payload)
+	buf := make([]byte, total)
+	buf[0] = byte(msg.Type)
+	binary.BigEndian.PutUint32(buf[1:5], uint32(len(msg.Payload)))
+	copy(buf[frameHeaderSize:], msg.Payload)
 
-	if _, err := w.Write(header); err != nil {
-		return fmt.Errorf("write header: %w", err)
-	}
-	if len(msg.Payload) > 0 {
-		if _, err := w.Write(msg.Payload); err != nil {
-			return fmt.Errorf("write payload: %w", err)
-		}
+	if _, err := w.Write(buf); err != nil {
+		return fmt.Errorf("write message: %w", err)
 	}
 	return nil
 }
