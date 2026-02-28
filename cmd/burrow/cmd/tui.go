@@ -437,9 +437,6 @@ func (m tuiModel) handleSessionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.err = nil
 			return m, m.refreshDetail()
 		}
-	case "r":
-		m.statusMsg = "Refreshing..."
-		return m, tuiFetchSessions(m.client, m.apiURL, m.apiToken)
 	case "t", "T":
 		if len(m.sessions) > 0 && m.cursor < len(m.sessions) {
 			s := m.sessions[m.cursor]
@@ -682,7 +679,7 @@ func (m tuiModel) viewSessions(b *strings.Builder) {
 	}
 
 	b.WriteString("\n\n")
-	b.WriteString(tuiHelpStyle.Render("  \u2191/k up  \u2193/j down  enter select  T toggle TUN  r refresh  q quit"))
+	b.WriteString(tuiHelpStyle.Render("  \u2191/k up  \u2193/j down  enter select  T toggle TUN  q quit"))
 }
 
 func (m tuiModel) viewDetail(b *strings.Builder) {
