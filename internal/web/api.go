@@ -18,6 +18,7 @@ type SessionInfo struct {
 	Routes    int      `json:"route_count"`
 	BytesIn   int64    `json:"bytes_in"`
 	BytesOut  int64    `json:"bytes_out"`
+	TunActive bool     `json:"tun_active"`
 }
 
 // TunnelInfo describes a tunnel for the dashboard.

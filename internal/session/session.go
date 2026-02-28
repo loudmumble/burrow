@@ -177,6 +177,7 @@ func (m *Manager) ListSessions() []web.SessionInfo {
 			IPs:       s.IPs,
 			Active:    s.Active,
 			CreatedAt: s.CreatedAt.Format(time.RFC3339),
+			TunActive: m.tunSession == s.ID && m.tunIface != nil,
 		})
 	}
 	return result
@@ -198,6 +199,7 @@ func (m *Manager) GetSession(id string) (web.SessionInfo, bool) {
 		IPs:       s.IPs,
 		Active:    s.Active,
 		CreatedAt: s.CreatedAt.Format(time.RFC3339),
+		TunActive: m.tunSession == s.ID && m.tunIface != nil,
 	}, true
 }
 
@@ -544,6 +546,35 @@ func (m *Manager) StartTun(sessionID string) error {
 
 	go m.tunRelayToStream(tunCtx, iface, ac)
 	go m.tunRelayFromStream(tunCtx, iface, ac)
+
+	// Auto-add routes for the agent's reported subnets.
+	// Derive /24 networks from each of the agent's IPs and add kernel routes
+	// through the TUN interface so traffic flows transparently.
+	for _, ipStr := range ac.Info.IPs {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
+		}
+		ip4 := ip.To4()
+		if ip4 == nil {
+			continue // skip IPv6 for now
+		}
+		// Skip loopback and link-local.
+		if ip4[0] == 127 || (ip4[0] == 169 && ip4[1] == 254) {
+			continue
+		}
+		cidr := fmt.Sprintf("%d.%d.%d.0/24", ip4[0], ip4[1], ip4[2])
+		iface.AddRoute(cidr)
+		// Also store in session routes for visibility.
+		ac.mu.Lock()
+		ac.routes[cidr] = &web.RouteInfo{
+			CIDR:      cidr,
+			SessionID: sessionID,
+			Active:    true,
+		}
+		ac.mu.Unlock()
+		fmt.Printf("[*] TUN auto-route: %s via %s\n", cidr, iface.Name)
+	}
 
 	return nil
 }
