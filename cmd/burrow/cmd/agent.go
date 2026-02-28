@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -292,12 +293,34 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 				fmt.Printf("[*] Tunnel request: %s %s -> %s (%s)\n",
 					req.Direction, req.ListenAddr, req.RemoteAddr, req.Protocol)
 
-				var t *tunnel.Tunnel
 				switch req.Direction {
 				case "local":
-					t = tunnel.NewLocalForward(req.ListenAddr, req.RemoteAddr)
+					t := tunnel.NewLocalForward(req.ListenAddr, req.RemoteAddr)
+					startErr := t.StartWithContext(ctx)
+					ackPayload := &protocol.TunnelAckPayload{ID: req.ID}
+					if startErr != nil {
+						ackPayload.Error = startErr.Error()
+					} else {
+						ackPayload.BoundAddr = t.Addr()
+						activeTunnels[req.ID] = t
+					}
+					ackMsg, _ := protocol.EncodeTunnelAck(ackPayload)
+					protocol.WriteMessage(ctrl, ackMsg)
+
 				case "remote", "reverse":
-					t = tunnel.NewRemoteForward(req.ListenAddr, req.RemoteAddr)
+					// Remote tunnel: agent listens, forwards connections through yamux back to server
+					ln, listenErr := net.Listen(req.Protocol, req.ListenAddr)
+					ackPayload := &protocol.TunnelAckPayload{ID: req.ID}
+					if listenErr != nil {
+						ackPayload.Error = listenErr.Error()
+					} else {
+						ackPayload.BoundAddr = ln.Addr().String()
+						activeListeners[req.ID] = ln
+						go remoteTunnelAcceptLoop(ctx, ln, sess, req.RemoteAddr)
+					}
+					ackMsg, _ := protocol.EncodeTunnelAck(ackPayload)
+					protocol.WriteMessage(ctrl, ackMsg)
+
 				default:
 					ackPayload := &protocol.TunnelAckPayload{
 						ID:    req.ID,
@@ -305,19 +328,7 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 					}
 					ackMsg, _ := protocol.EncodeTunnelAck(ackPayload)
 					protocol.WriteMessage(ctrl, ackMsg)
-					continue
 				}
-
-				startErr := t.StartWithContext(ctx)
-				ackPayload := &protocol.TunnelAckPayload{ID: req.ID}
-				if startErr != nil {
-					ackPayload.Error = startErr.Error()
-				} else {
-					ackPayload.BoundAddr = t.Addr()
-					activeTunnels[req.ID] = t
-				}
-				ackMsg, _ := protocol.EncodeTunnelAck(ackPayload)
-				protocol.WriteMessage(ctrl, ackMsg)
 
 			case protocol.MsgRouteAdd:
 				route, err := protocol.DecodeRouteAdd(msg)
@@ -347,6 +358,10 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 					t.Stop()
 					delete(activeTunnels, tunnelID)
 					fmt.Printf("[*] Tunnel closed: %s\n", tunnelID)
+				} else if l, ok := activeListeners[tunnelID]; ok {
+					l.Close()
+					delete(activeListeners, tunnelID)
+					fmt.Printf("[*] Remote tunnel closed: %s\n", tunnelID)
 				} else {
 					fmt.Printf("[*] Tunnel close (unknown ID): %s\n", tunnelID)
 				}
@@ -391,6 +406,7 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 					fmt.Fprintf(os.Stderr, "[!] TUN data stream failed: %v\n", streamErr)
 					continue
 				}
+				dataStream.Write([]byte{0x01}) // Stream type: TUN data
 				tunNS = ns
 				tunStream = dataStream
 				tunCtx, cancel := context.WithCancel(ctx)
@@ -500,4 +516,48 @@ func tunAgentRelay(ctx context.Context, stream net.Conn, ns *netstack.Stack) {
 			return
 		}
 	}
+}
+
+func remoteTunnelAcceptLoop(ctx context.Context, ln net.Listener, sess *mux.Session, remoteAddr string) {
+	go func() {
+		<-ctx.Done()
+		ln.Close()
+	}()
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
+				return
+			}
+			continue
+		}
+		go remoteTunnelRelay(conn, sess, remoteAddr)
+	}
+}
+
+func remoteTunnelRelay(conn net.Conn, sess *mux.Session, remoteAddr string) {
+	defer conn.Close()
+	stream, err := sess.Open()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[!] Remote tunnel: failed to open yamux stream: %v\n", err)
+		return
+	}
+	defer stream.Close()
+
+	// Write stream type header: [0x02] [2-byte addr len BE] [addr bytes]
+	addrBytes := []byte(remoteAddr)
+	hdr := make([]byte, 3+len(addrBytes))
+	hdr[0] = 0x02 // Stream type: remote tunnel
+	binary.BigEndian.PutUint16(hdr[1:3], uint16(len(addrBytes)))
+	copy(hdr[3:], addrBytes)
+	if _, err := stream.Write(hdr); err != nil {
+		fmt.Fprintf(os.Stderr, "[!] Remote tunnel: failed to write header: %v\n", err)
+		return
+	}
+
+	// Bidirectional relay between incoming connection and yamux stream
+	done := make(chan struct{}, 2)
+	go func() { io.Copy(stream, conn); done <- struct{}{} }()
+	go func() { io.Copy(conn, stream); done <- struct{}{} }()
+	<-done
 }

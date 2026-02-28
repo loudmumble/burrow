@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
@@ -366,6 +368,60 @@ func acceptDataStreams(sess *mux.Session, mgr *session.Manager, sessionID string
 		if err != nil {
 			return
 		}
-		mgr.HandleDataStream(sessionID, stream)
+
+		// Read 1-byte stream type header
+		typeBuf := make([]byte, 1)
+		if _, err := io.ReadFull(stream, typeBuf); err != nil {
+			stream.Close()
+			continue
+		}
+
+		switch typeBuf[0] {
+		case 0x01: // TUN data stream
+			mgr.HandleDataStream(sessionID, stream)
+		case 0x02: // Remote tunnel connection
+			go handleRemoteTunnelStream(stream)
+		default:
+			fmt.Fprintf(os.Stderr, "[!] Unknown stream type 0x%02x from session %s\n", typeBuf[0], sessionID)
+			stream.Close()
+		}
 	}
+}
+
+func handleRemoteTunnelStream(stream net.Conn) {
+	defer stream.Close()
+
+	// Read address header: [2-byte addr len BE] [addr bytes]
+	lenBuf := make([]byte, 2)
+	if _, err := io.ReadFull(stream, lenBuf); err != nil {
+		fmt.Fprintf(os.Stderr, "[!] Remote tunnel: failed to read addr length: %v\n", err)
+		return
+	}
+	addrLen := binary.BigEndian.Uint16(lenBuf)
+	if addrLen == 0 || addrLen > 512 {
+		fmt.Fprintf(os.Stderr, "[!] Remote tunnel: invalid addr length: %d\n", addrLen)
+		return
+	}
+	addrBuf := make([]byte, addrLen)
+	if _, err := io.ReadFull(stream, addrBuf); err != nil {
+		fmt.Fprintf(os.Stderr, "[!] Remote tunnel: failed to read addr: %v\n", err)
+		return
+	}
+	remoteAddr := string(addrBuf)
+
+	// Dial the target on the SERVER machine (operator's machine)
+	conn, err := net.DialTimeout("tcp", remoteAddr, 10*time.Second)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[!] Remote tunnel: failed to dial %s: %v\n", remoteAddr, err)
+		return
+	}
+	defer conn.Close()
+
+	fmt.Printf("[*] Remote tunnel: relaying to %s\n", remoteAddr)
+
+	// Bidirectional relay between yamux stream and local connection
+	done := make(chan struct{}, 2)
+	go func() { io.Copy(conn, stream); done <- struct{}{} }()
+	go func() { io.Copy(stream, conn); done <- struct{}{} }()
+	<-done
 }
