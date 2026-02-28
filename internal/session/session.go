@@ -64,6 +64,16 @@ func NewManager() *Manager {
 	}
 }
 
+// Shutdown cleanly tears down all TUN state. Call on server exit.
+func (m *Manager) Shutdown() {
+	m.mu.RLock()
+	sid := m.tunSession
+	m.mu.RUnlock()
+	if sid != "" {
+		_ = m.StopTun(sid)
+	}
+}
+
 // List returns all active sessions.
 func (m *Manager) List() []*Info {
 	m.mu.RLock()
@@ -109,8 +119,16 @@ func (m *Manager) AddConn(info *Info, muxSess *mux.Session, ctrl net.Conn) {
 	}
 }
 
-// Remove deletes a session by ID.
+// Remove deletes a session by ID. If TUN is active on this session, it is stopped first.
 func (m *Manager) Remove(id string) {
+	// If this session owns TUN, stop it before removing.
+	m.mu.RLock()
+	ownsTun := m.tunSession == id && m.tunIface != nil
+	m.mu.RUnlock()
+	if ownsTun {
+		_ = m.StopTun(id) // best-effort cleanup
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.sessions, id)

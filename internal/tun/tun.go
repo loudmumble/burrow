@@ -54,6 +54,9 @@ func New(name string) (*Interface, error) {
 		name = DefaultName
 	}
 
+	// Clean up any stale interface from a previous crash/restart.
+	_ = runIP("link", "delete", name)
+
 	cfg := water.Config{
 		DeviceType: water.TUN,
 	}
