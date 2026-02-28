@@ -76,7 +76,7 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 func (h *apiHandler) AuthMiddleware(next http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if h.apiToken == "" {
-			writeError(w, http.StatusUnauthorized, "API token not configured")
+			next.ServeHTTP(w, r)
 			return
 		}
 
