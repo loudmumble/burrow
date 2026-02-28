@@ -479,7 +479,7 @@ func (m tuiModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "t":
 		m.view = tuiViewAddTunnel
-		m.inputFields = []string{"Direction (local/remote)", "Listen Address", "Remote Address", "Protocol"}
+		m.inputFields = []string{"Direction", "Listen Address", "Remote Address", "Protocol"}
 		m.inputValues = []string{"local", "", "", "tcp"}
 		m.inputCursor = 1
 		m.statusMsg = ""
@@ -551,23 +551,46 @@ func (m tuiModel) handleFormKey(msg tea.KeyMsg, isTunnel bool) (tea.Model, tea.C
 			m.inputCursor = len(m.inputFields) - 1
 		}
 		return m, nil
-	case "backspace":
-		v := m.inputValues[m.inputCursor]
-		if len(v) > 0 {
-			m.inputValues[m.inputCursor] = v[:len(v)-1]
-		}
-		return m, nil
 	case "enter":
 		if isTunnel {
 			return m.submitTunnel()
 		}
 		return m.submitRoute()
+	}
+
+	// Toggle fields: Direction (0) and Protocol (3) in tunnel form
+	if isTunnel && (m.inputCursor == 0 || m.inputCursor == 3) {
+		if key == " " || key == "left" || key == "right" {
+			if m.inputCursor == 0 {
+				if m.inputValues[0] == "local" {
+					m.inputValues[0] = "remote"
+				} else {
+					m.inputValues[0] = "local"
+				}
+			} else {
+				if m.inputValues[3] == "tcp" {
+					m.inputValues[3] = "udp"
+				} else {
+					m.inputValues[3] = "tcp"
+				}
+			}
+		}
+		return m, nil
+	}
+
+	// Text input fields
+	switch key {
+	case "backspace":
+		v := m.inputValues[m.inputCursor]
+		if len(v) > 0 {
+			m.inputValues[m.inputCursor] = v[:len(v)-1]
+		}
 	default:
 		if len(key) == 1 && key[0] >= 32 && key[0] <= 126 {
 			m.inputValues[m.inputCursor] += key
 		}
-		return m, nil
 	}
+	return m, nil
 }
 
 func (m tuiModel) submitTunnel() (tea.Model, tea.Cmd) {
@@ -813,20 +836,51 @@ func (m tuiModel) viewForm(b *strings.Builder, title string) {
 		b.WriteString(tuiErrorStyle.Render("  Error: "+m.err.Error()) + "\n\n")
 	}
 
+	isTunnelForm := title == "Add Tunnel"
+
 	for i, field := range m.inputFields {
 		label := fmt.Sprintf("%-32s", field+":")
 		value := m.inputValues[i]
+		isToggle := isTunnelForm && (i == 0 || i == 3)
+		focused := i == m.inputCursor
 
-		if i == m.inputCursor {
-			cursor := tuiFocusedStyle.Render("|")
-			b.WriteString(tuiSelectedStyle.Render("▸ ") + tuiFocusedStyle.Render(label) + " [" + value + cursor + "]\n")
+		if isToggle {
+			var options []string
+			if i == 0 {
+				options = []string{"local", "remote"}
+			} else {
+				options = []string{"tcp", "udp"}
+			}
+			var parts []string
+			for _, opt := range options {
+				if opt == value {
+					if focused {
+						parts = append(parts, tuiFocusedStyle.Render("["+opt+"]"))
+					} else {
+						parts = append(parts, "["+opt+"]")
+					}
+				} else {
+					parts = append(parts, tuiDimStyle.Render(" "+opt+" "))
+				}
+			}
+			optStr := strings.Join(parts, " ")
+			if focused {
+				b.WriteString(tuiSelectedStyle.Render("\u25b8 ") + tuiFocusedStyle.Render(label) + " " + optStr + "\n")
+			} else {
+				b.WriteString("  " + tuiDimStyle.Render(label) + " " + optStr + "\n")
+			}
 		} else {
-			b.WriteString("  " + tuiDimStyle.Render(label) + " [" + value + "]\n")
+			if focused {
+				cursor := tuiFocusedStyle.Render("|")
+				b.WriteString(tuiSelectedStyle.Render("\u25b8 ") + tuiFocusedStyle.Render(label) + " [" + value + cursor + "]\n")
+			} else {
+				b.WriteString("  " + tuiDimStyle.Render(label) + " [" + value + "]\n")
+			}
 		}
 	}
 
 	b.WriteString("\n")
-	b.WriteString(tuiHelpStyle.Render("  enter submit  tab/↓ next  shift+tab/↑ prev  esc cancel"))
+	b.WriteString(tuiHelpStyle.Render("  enter submit  tab/\u2193 next  shift+tab/\u2191 prev  space toggle  esc cancel"))
 }
 
 // -- Helpers --
