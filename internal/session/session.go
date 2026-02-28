@@ -481,39 +481,6 @@ func (s *Server) Stop() error {
 
 // --- TUN mode methods ---
 
-// subnetAlreadyRouted checks whether the server itself has a local IP address
-// inside the given CIDR. If the server has an IP in 10.10.155.0/24 and we add
-// a route for that subnet through burrow0, we'd hijack the C2 path (e.g. SSH
-// tunnel to the agent) and create a routing loop that kills the session.
-//
-// The previous approach used `ip route get` but that's defeated by the kernel's
-// default route — every destination appears routable via eth0, so ALL subnets
-// get skipped and no TUN routes are added at all.
-func subnetAlreadyRouted(cidr string) bool {
-	_, targetNet, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return false
-	}
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		// Can't enumerate interfaces — be safe and skip this route.
-		return true
-	}
-	for _, addr := range addrs {
-		ipNet, ok := addr.(*net.IPNet)
-		if !ok {
-			continue
-		}
-		if ipNet.IP.IsLoopback() {
-			continue
-		}
-		if targetNet.Contains(ipNet.IP) {
-			return true
-		}
-	}
-	return false
-}
-
 // StartTun activates the TUN interface for transparent routing on the given session.
 // Only one session can own the TUN interface at a time.
 func (m *Manager) StartTun(sessionID string) error {
@@ -581,44 +548,7 @@ func (m *Manager) StartTun(sessionID string) error {
 	go m.tunRelayToStream(tunCtx, iface, ac)
 	go m.tunRelayFromStream(tunCtx, iface, ac)
 
-	// Auto-add routes for the agent's reported subnets.
-	// Derive /24 networks from each of the agent's IPs and add kernel routes
-	// through the TUN interface so traffic flows transparently.
-	for _, ipStr := range ac.Info.IPs {
-		ip := net.ParseIP(ipStr)
-		if ip == nil {
-			continue
-		}
-		ip4 := ip.To4()
-		if ip4 == nil {
-			continue // skip IPv6 for now
-		}
-		// Skip loopback and link-local.
-		if ip4[0] == 127 || (ip4[0] == 169 && ip4[1] == 254) {
-			continue
-		}
-		cidr := fmt.Sprintf("%d.%d.%d.0/24", ip4[0], ip4[1], ip4[2])
-		// Safety check: do NOT add a route if the SERVER has a local IP in
-		// this subnet. If we do, we'd hijack the C2 path (e.g. SSH tunnel
-		// to the agent) and create a routing loop that kills the session.
-		if subnetAlreadyRouted(cidr) {
-			fmt.Printf("[*] TUN auto-route: SKIPPING %s (already routed, would cause loop)\n", cidr)
-			continue
-		}
-		if err := iface.AddRoute(cidr); err != nil {
-			fmt.Printf("[!] TUN auto-route: failed to add %s: %v\n", cidr, err)
-			continue
-		}
-		// Also store in session routes for visibility.
-		ac.mu.Lock()
-		ac.routes[cidr] = &web.RouteInfo{
-			CIDR:      cidr,
-			SessionID: sessionID,
-			Active:    true,
-		}
-		ac.mu.Unlock()
-		fmt.Printf("[*] TUN auto-route: %s via %s\n", cidr, iface.Name)
-	}
+	fmt.Printf("[*] TUN active on session %s — add routes with 'route add <cidr>'\n", sessionID)
 
 	return nil
 }
@@ -738,8 +668,7 @@ func (m *Manager) tunRelayToStream(ctx context.Context, iface *tun.Interface, ac
 		stream := ac.tunStream
 		ac.mu.RUnlock()
 		if stream == nil {
-			fmt.Fprintln(os.Stderr, "[!] TUN relay: data stream is nil")
-			return
+			continue
 		}
 		if err := protocol.WriteRawPacket(stream, buf[:n]); err != nil {
 			if ctx.Err() == nil {

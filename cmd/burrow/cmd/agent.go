@@ -472,8 +472,10 @@ func reconnectBackoff(attempt int) time.Duration {
 }
 
 func tunAgentRelay(ctx context.Context, stream net.Conn, ns *netstack.Stack) {
-	// stream → netstack
+	injectDone := make(chan struct{})
+	// stream → netstack (receive packets from server, inject into gvisor)
 	go func() {
+		defer close(injectDone)
 		for {
 			pkt, err := protocol.ReadRawPacket(stream)
 			if err != nil {
@@ -482,8 +484,14 @@ func tunAgentRelay(ctx context.Context, stream net.Conn, ns *netstack.Stack) {
 			ns.InjectPacket(pkt)
 		}
 	}()
-	// netstack → stream
+	// netstack → stream (read response packets from gvisor, send to server)
 	for {
+		select {
+		case <-injectDone:
+			// stream→netstack goroutine died, stop the reverse direction too
+			return
+		default:
+		}
 		pkt, err := ns.ReadPacket(ctx)
 		if err != nil {
 			return

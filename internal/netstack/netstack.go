@@ -29,6 +29,7 @@ import (
 	"github.com/nicocha30/gvisor-ligolo/pkg/tcpip/transport/tcp"
 	"github.com/nicocha30/gvisor-ligolo/pkg/tcpip/transport/udp"
 	"github.com/nicocha30/gvisor-ligolo/pkg/waiter"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -108,8 +109,10 @@ func New(opts Opts) (*Stack, error) {
 	})
 
 	// Disable ICMP rate limiting so all ICMP messages are delivered.
-	ns.SetICMPLimit(0)
-	ns.SetICMPBurst(0)
+	// NOTE: SetICMPLimit(0) means rate=0 which BLOCKS all ICMP.
+	// rate.Inf means no limit.
+	ns.SetICMPLimit(rate.Inf)
+	ns.SetICMPBurst(1 << 30) // effectively unlimited burst
 
 	// Create the channel-backed virtual NIC.
 	ep := channel.New(channelSize, opts.MTU, "")
