@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"strings"
 	"path/filepath"
+	"sync"
 
 	"github.com/loudmumble/burrow/internal/certgen"
 	"github.com/loudmumble/burrow/internal/mux"
@@ -232,6 +233,7 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 	activeTunnels := make(map[string]*tunnel.Tunnel)
 	activeListeners := make(map[string]net.Listener)
 	activeRoutes := make(map[string]string)
+	var ctrlMu sync.Mutex
 
 	var tunNS *netstack.Stack
 	var tunStream net.Conn
@@ -288,7 +290,10 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 		case msg := <-msgCh:
 			switch msg.Type {
 			case protocol.MsgPing:
-				if err := protocol.WriteMessage(ctrl, protocol.NewPong()); err != nil {
+				ctrlMu.Lock()
+				err := protocol.WriteMessage(ctrl, protocol.NewPong())
+				ctrlMu.Unlock()
+				if err != nil {
 					return fmt.Errorf("send pong: %w", err)
 				}
 
@@ -313,7 +318,9 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 						activeTunnels[req.ID] = t
 					}
 					ackMsg, _ := protocol.EncodeTunnelAck(ackPayload)
+					ctrlMu.Lock()
 					protocol.WriteMessage(ctrl, ackMsg)
+					ctrlMu.Unlock()
 
 				case "remote", "reverse":
 					// Remote tunnel: agent listens, forwards connections through yamux back to server
@@ -327,7 +334,9 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 						go remoteTunnelAcceptLoop(ctx, ln, sess, req.RemoteAddr)
 					}
 					ackMsg, _ := protocol.EncodeTunnelAck(ackPayload)
+					ctrlMu.Lock()
 					protocol.WriteMessage(ctrl, ackMsg)
+					ctrlMu.Unlock()
 
 				default:
 					ackPayload := &protocol.TunnelAckPayload{
@@ -335,7 +344,9 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 						Error: fmt.Sprintf("unknown direction: %s", req.Direction),
 					}
 					ackMsg, _ := protocol.EncodeTunnelAck(ackPayload)
+					ctrlMu.Lock()
 					protocol.WriteMessage(ctrl, ackMsg)
+					ctrlMu.Unlock()
 				}
 
 			case protocol.MsgRouteAdd:
@@ -393,7 +404,9 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 					go acceptAndRelay(ctx, ln, req.ForwardAddr)
 				}
 				ackMsg, _ := protocol.EncodeListenerAck(ackPayload)
+				ctrlMu.Lock()
 				protocol.WriteMessage(ctrl, ackMsg)
+				ctrlMu.Unlock()
 
 			case protocol.MsgTunStart:
 				fmt.Println("[*] TUN start requested by server")
@@ -408,7 +421,9 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 					ackPayload.Error = nsErr.Error()
 				}
 				ackMsg, _ := protocol.EncodeTunStartAck(ackPayload)
+				ctrlMu.Lock()
 				protocol.WriteMessage(ctrl, ackMsg)
+				ctrlMu.Unlock()
 				if nsErr != nil {
 					fmt.Fprintf(os.Stderr, "[!] TUN start failed: %v\n", nsErr)
 					continue
@@ -474,7 +489,9 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 					}
 					respMsg, _ := protocol.EncodeExecResponse(resp)
 					if respMsg != nil {
+						ctrlMu.Lock()
 						protocol.WriteMessage(ctrl, respMsg)
+						ctrlMu.Unlock()
 					}
 				}(req.ID, req.Command)
 
@@ -497,7 +514,9 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 					}
 					respMsg, _ := protocol.EncodeFileDownloadResponse(resp)
 					if respMsg != nil {
+						ctrlMu.Lock()
 						protocol.WriteMessage(ctrl, respMsg)
+						ctrlMu.Unlock()
 					}
 				}(req.ID, req.FilePath)
 
@@ -518,7 +537,9 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 					}
 					respMsg, _ := protocol.EncodeFileUploadResponse(resp)
 					if respMsg != nil {
+						ctrlMu.Lock()
 						protocol.WriteMessage(ctrl, respMsg)
+						ctrlMu.Unlock()
 					}
 				}(req.ID, req.FilePath, req.Data)
 			case protocol.MsgError:

@@ -135,7 +135,8 @@ func runServer(cmd *cobra.Command, _ []string) {
 				if ctx.Err() != nil {
 					return
 				}
-				return
+				fmt.Fprintf(os.Stderr, "[!] Accept error: %v\n", err)
+				continue
 			}
 			go handleAgentConn(conn, mgr)
 		}
