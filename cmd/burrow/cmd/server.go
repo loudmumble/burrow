@@ -191,8 +191,12 @@ func runServer(cmd *cobra.Command, _ []string) {
 		time.Sleep(200 * time.Millisecond)
 		if err := RunTUI(mgr); err != nil {
 			fmt.Fprintf(os.Stderr, "[!] TUI error: %v\n", err)
+			fmt.Println("[*] TUI failed, server still running. Ctrl+C to stop.")
+			sigChan := make(chan os.Signal, 1)
+			signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+			<-sigChan
 		}
-		fmt.Println("\n[*] TUI exited, shutting down...")
+		fmt.Println("\n[*] Shutting down...")
 		mgr.Shutdown()
 		cancel()
 	} else {
