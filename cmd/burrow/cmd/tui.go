@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -66,6 +68,8 @@ const (
 	tuiViewAddRoute
 	tuiViewConfirmDelete
 	tuiViewExec
+	tuiViewDownload
+	tuiViewUpload
 )
 
 type tuiDetailTab int
@@ -123,6 +127,8 @@ type tuiActionDoneMsg string
 type tuiActionErrMsg struct{ err error }
 type tuiSpinnerTickMsg struct{} // unused, spinner handled internally
 type tuiExecResultMsg struct{ output string; err error }
+type tuiDownloadResultMsg struct{ fileName string; size int64; err error }
+type tuiUploadResultMsg struct{ size int64; err error }
 
 // ── Model ───────────────────────────────────────────────────────────────────
 
@@ -241,6 +247,32 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.refreshData()
 		return m, nil
+
+	case tuiDownloadResultMsg:
+		m.spinning = false
+		if msg.err != nil {
+			m.logs.add("download error: " + msg.err.Error())
+			m.err = msg.err
+			m.errExpiry = time.Now().Add(10 * time.Second)
+		} else {
+			m.statusMsg = fmt.Sprintf("Downloaded %s (%s)", msg.fileName, tuiFormatBytes(msg.size))
+			m.logs.add(fmt.Sprintf("download: %s (%s)", msg.fileName, tuiFormatBytes(msg.size)))
+		}
+		m.refreshData()
+		return m, nil
+
+	case tuiUploadResultMsg:
+		m.spinning = false
+		if msg.err != nil {
+			m.logs.add("upload error: " + msg.err.Error())
+			m.err = msg.err
+			m.errExpiry = time.Now().Add(10 * time.Second)
+		} else {
+			m.statusMsg = fmt.Sprintf("Uploaded (%s)", tuiFormatBytes(msg.size))
+			m.logs.add(fmt.Sprintf("upload: %s written", tuiFormatBytes(msg.size)))
+		}
+		m.refreshData()
+		return m, nil
 	}
 
 	return m, nil
@@ -311,6 +343,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleConfirmKey(msg)
 	case tuiViewExec:
 		return m.handleExecKey(msg)
+	case tuiViewDownload:
+		return m.handleDownloadKey(msg)
+	case tuiViewUpload:
+		return m.handleUploadKey(msg)
 	}
 	return m, nil
 }
@@ -457,6 +493,26 @@ func (m tuiModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.view = tuiViewExec
 			m.inputFields = []string{"Command"}
 			m.inputValues = []string{""}
+			m.inputCursor = 0
+			m.statusMsg = ""
+			m.err = nil
+			m.errExpiry = time.Time{}
+		}
+	case "w":
+		if m.selected != "" {
+			m.view = tuiViewDownload
+			m.inputFields = []string{"Remote Path"}
+			m.inputValues = []string{""}
+			m.inputCursor = 0
+			m.statusMsg = ""
+			m.err = nil
+			m.errExpiry = time.Time{}
+		}
+	case "p":
+		if m.selected != "" {
+			m.view = tuiViewUpload
+			m.inputFields = []string{"Local Path", "Remote Path"}
+			m.inputValues = []string{"", ""}
 			m.inputCursor = 0
 			m.statusMsg = ""
 			m.err = nil
@@ -773,6 +829,204 @@ func (m tuiModel) viewExecForm(b *strings.Builder) {
 	b.WriteString(renderHelpBar([]string{"enter execute", "esc cancel"}))
 }
 
+func (m tuiModel) handleDownloadKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "esc":
+		m.view = tuiViewSessionDetail
+		m.cursor = 0
+		m.err = nil
+		m.errExpiry = time.Time{}
+		return m, nil
+	case "enter":
+		remotePath := strings.TrimSpace(m.inputValues[0])
+		if remotePath == "" {
+			m.err = fmt.Errorf("remote path is required")
+			m.errExpiry = time.Now().Add(5 * time.Second)
+			return m, nil
+		}
+		m.view = tuiViewSessionDetail
+		m.spinning = true
+		m.statusMsg = fmt.Sprintf("Downloading: %s", tuiTruncate(remotePath, 40))
+		return m, m.doDownloadFile(m.selected, remotePath)
+	case "backspace":
+		v := m.inputValues[0]
+		if len(v) > 0 {
+			m.inputValues[0] = v[:len(v)-1]
+		}
+	default:
+		if len(key) == 1 && key[0] >= 32 && key[0] <= 126 {
+			m.inputValues[0] += key
+		}
+	}
+	return m, nil
+}
+
+func (m tuiModel) handleUploadKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "esc":
+		m.view = tuiViewSessionDetail
+		m.cursor = 0
+		m.err = nil
+		m.errExpiry = time.Time{}
+		return m, nil
+	case "tab", "down":
+		m.inputCursor = (m.inputCursor + 1) % len(m.inputFields)
+		return m, nil
+	case "shift+tab", "up":
+		m.inputCursor--
+		if m.inputCursor < 0 {
+			m.inputCursor = len(m.inputFields) - 1
+		}
+		return m, nil
+	case "enter":
+		localPath := strings.TrimSpace(m.inputValues[0])
+		remotePath := strings.TrimSpace(m.inputValues[1])
+		if localPath == "" || remotePath == "" {
+			m.err = fmt.Errorf("both local path and remote path are required")
+			m.errExpiry = time.Now().Add(5 * time.Second)
+			return m, nil
+		}
+		m.view = tuiViewSessionDetail
+		m.spinning = true
+		m.statusMsg = fmt.Sprintf("Uploading: %s", tuiTruncate(localPath, 40))
+		return m, m.doUploadFile(m.selected, localPath, remotePath)
+	case "backspace":
+		v := m.inputValues[m.inputCursor]
+		if len(v) > 0 {
+			m.inputValues[m.inputCursor] = v[:len(v)-1]
+		}
+	default:
+		if len(key) == 1 && key[0] >= 32 && key[0] <= 126 {
+			m.inputValues[m.inputCursor] += key
+		}
+	}
+	return m, nil
+}
+
+func (m *tuiModel) doDownloadFile(sessionID, remotePath string) tea.Cmd {
+	mgr := m.mgr
+	return func() tea.Msg {
+		resp, err := mgr.DownloadFile(sessionID, remotePath)
+		if err != nil {
+			return tuiDownloadResultMsg{err: err}
+		}
+		// Write file to current working directory
+		fileName := resp.FileName
+		if fileName == "" {
+			fileName = filepath.Base(remotePath)
+		}
+		if writeErr := os.WriteFile(fileName, resp.Data, 0644); writeErr != nil {
+			return tuiDownloadResultMsg{err: writeErr}
+		}
+		return tuiDownloadResultMsg{fileName: fileName, size: resp.Size}
+	}
+}
+
+func (m *tuiModel) doUploadFile(sessionID, localPath, remotePath string) tea.Cmd {
+	mgr := m.mgr
+	return func() tea.Msg {
+		data, err := os.ReadFile(localPath)
+		if err != nil {
+			return tuiUploadResultMsg{err: err}
+		}
+		resp, err := mgr.UploadFile(sessionID, remotePath, data)
+		if err != nil {
+			return tuiUploadResultMsg{err: err}
+		}
+		return tuiUploadResultMsg{size: resp.Size}
+	}
+}
+
+func (m tuiModel) viewDownloadForm(b *strings.Builder) {
+	m.renderBanner(b)
+	b.WriteString("\n")
+	b.WriteString(stAccent.Bold(true).Render("  Download File"))
+	b.WriteString("\n")
+	b.WriteString(stDim.Render(fmt.Sprintf("  Session: %s", m.selected)) + "\n")
+	b.WriteString(renderSep(m.width) + "\n\n")
+
+	if m.err != nil {
+		b.WriteString(stError.Render("  \u2717 "+m.err.Error()) + "\n\n")
+	}
+
+	boxW := min(m.width-8, 60)
+	if boxW < 20 {
+		boxW = 20
+	}
+
+	b.WriteString(stCyan.Bold(true).Render("\u25b8 ") + stCyan.Bold(true).Render("Remote Path:") + "\n")
+	cursor := stCyan.Bold(true).Render("\u2588")
+	value := m.inputValues[0]
+	displayVal := value + cursor
+	padding := max(0, boxW-2-len(value)-1)
+	b.WriteString("    \u250c" + strings.Repeat("\u2500", boxW) + "\u2510\n")
+	b.WriteString("    \u2502 " + displayVal + strings.Repeat(" ", padding) + " \u2502\n")
+	b.WriteString("    \u2514" + strings.Repeat("\u2500", boxW) + "\u2518\n")
+
+	b.WriteString("\n")
+	b.WriteString(stDim.Render("  File will be saved to server's current directory") + "\n")
+
+	b.WriteString("\n")
+	b.WriteString(renderHelpBar([]string{"enter download", "esc cancel"}))
+}
+
+func (m tuiModel) viewUploadForm(b *strings.Builder) {
+	m.renderBanner(b)
+	b.WriteString("\n")
+	b.WriteString(stAccent.Bold(true).Render("  Upload File"))
+	b.WriteString(stFieldCtr.Render(fmt.Sprintf("  (Field %d/%d)", m.inputCursor+1, len(m.inputFields))))
+	b.WriteString("\n")
+	b.WriteString(stDim.Render(fmt.Sprintf("  Session: %s", m.selected)) + "\n")
+	b.WriteString(renderSep(m.width) + "\n\n")
+
+	if m.err != nil {
+		b.WriteString(stError.Render("  \u2717 "+m.err.Error()) + "\n\n")
+	}
+
+	boxW := min(m.width-8, 60)
+	if boxW < 20 {
+		boxW = 20
+	}
+
+	for i, field := range m.inputFields {
+		label := field + ":"
+		value := m.inputValues[i]
+		focused := i == m.inputCursor
+
+		if focused {
+			b.WriteString(stCyan.Bold(true).Render("\u25b8 ") + stCyan.Bold(true).Render(label) + "\n")
+		} else {
+			b.WriteString("  " + stDim.Render(label) + "\n")
+		}
+
+		cursor := ""
+		if focused {
+			cursor = stCyan.Bold(true).Render("\u2588")
+		}
+		displayVal := value + cursor
+		valWidth := len(value)
+		if focused {
+			valWidth++
+		}
+		padding := max(0, boxW-2-valWidth)
+
+		if focused {
+			b.WriteString("    \u250c" + strings.Repeat("\u2500", boxW) + "\u2510\n")
+			b.WriteString("    \u2502 " + displayVal + strings.Repeat(" ", padding) + " \u2502\n")
+			b.WriteString("    \u2514" + strings.Repeat("\u2500", boxW) + "\u2518\n")
+		} else {
+			b.WriteString(stFormBdr.Render("    \u250c"+strings.Repeat("\u2500", boxW)+"\u2510") + "\n")
+			b.WriteString(stFormBdr.Render("    \u2502 ") + value + stFormBdr.Render(strings.Repeat(" ", padding+1)+"\u2502") + "\n")
+			b.WriteString(stFormBdr.Render("    \u2514"+strings.Repeat("\u2500", boxW)+"\u2518") + "\n")
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString(renderHelpBar([]string{"enter upload", "tab/\u2193 next", "shift+tab/\u2191 prev", "esc cancel"}))
+}
+
 // ── View ────────────────────────────────────────────────────────────────────
 
 func (m tuiModel) View() string {
@@ -793,6 +1047,10 @@ func (m tuiModel) View() string {
 		m.viewConfirm(&b)
 	case tuiViewExec:
 		m.viewExecForm(&b)
+	case tuiViewDownload:
+		m.viewDownloadForm(&b)
+	case tuiViewUpload:
+		m.viewUploadForm(&b)
 	}
 
 	// Status bar at bottom
@@ -1078,7 +1336,7 @@ func (m tuiModel) viewDetail(b *strings.Builder) {
 	b.WriteString("\n\n")
 	b.WriteString(renderHelpBar([]string{
 		"↑/k up", "↓/j down", "^T TUN", "s SOCKS5", "t tunnel", "r route",
-		"u start", "n stop", "d delete", "x exec", "tab switch", "esc back",
+		"u start", "n stop", "d delete", "x exec", "w download", "p upload", "tab switch", "esc back",
 	}))
 }
 

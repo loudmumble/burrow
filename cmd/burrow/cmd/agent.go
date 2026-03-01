@@ -16,6 +16,7 @@ import (
 	"time"
 	"os/exec"
 	"strings"
+	"path/filepath"
 
 	"github.com/loudmumble/burrow/internal/certgen"
 	"github.com/loudmumble/burrow/internal/mux"
@@ -477,7 +478,51 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 					}
 				}(req.ID, req.Command)
 
-			case protocol.MsgError:
+			case protocol.MsgFileDownloadRequest:
+				req, err := protocol.DecodeFileDownloadRequest(msg)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[!] Bad file download request: %v\n", err)
+					continue
+				}
+				fmt.Printf("[*] File download request: %s\n", req.FilePath)
+				go func(id, filePath string) {
+					resp := &protocol.FileDownloadResponsePayload{ID: id}
+					data, readErr := os.ReadFile(filePath)
+					if readErr != nil {
+						resp.Error = readErr.Error()
+					} else {
+						resp.FileName = filepath.Base(filePath)
+						resp.Data = data
+						resp.Size = int64(len(data))
+					}
+					respMsg, _ := protocol.EncodeFileDownloadResponse(resp)
+					if respMsg != nil {
+						protocol.WriteMessage(ctrl, respMsg)
+					}
+				}(req.ID, req.FilePath)
+
+			case protocol.MsgFileUploadRequest:
+				req, err := protocol.DecodeFileUploadRequest(msg)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[!] Bad file upload request: %v\n", err)
+					continue
+				}
+				fmt.Printf("[*] File upload request: %s\n", req.FilePath)
+				go func(id, filePath string, data []byte) {
+					resp := &protocol.FileUploadResponsePayload{ID: id}
+					writeErr := os.WriteFile(filePath, data, 0644)
+					if writeErr != nil {
+						resp.Error = writeErr.Error()
+					} else {
+						resp.Size = int64(len(data))
+					}
+					respMsg, _ := protocol.EncodeFileUploadResponse(resp)
+					if respMsg != nil {
+						protocol.WriteMessage(ctrl, respMsg)
+					}
+				}(req.ID, req.FilePath, req.Data)
+
+
 				errStr, _ := protocol.DecodeError(msg)
 				return fmt.Errorf("server error: %s", errStr)
 

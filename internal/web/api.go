@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	"github.com/loudmumble/burrow/internal/protocol"
 )
 
 // SessionInfo describes an agent session for the dashboard.
@@ -60,6 +62,8 @@ type SessionProvider interface {
 	StopTun(sessionID string) error
 	IsTunActive(sessionID string) bool
 	ExecCommand(sessionID, command string) (string, error)
+	DownloadFile(sessionID, filePath string) (*protocol.FileDownloadResponsePayload, error)
+	UploadFile(sessionID, filePath string, data []byte) (*protocol.FileUploadResponsePayload, error)
 }
 
 // apiHandler holds references needed by all REST handlers.

@@ -360,6 +360,20 @@ func serverCommandLoop(ctrl net.Conn, mgr *session.Manager, sessionID string) er
 					continue
 				}
 				mgr.HandleExecResponse(sessionID, resp)
+			case protocol.MsgFileDownloadResponse:
+				resp, err := protocol.DecodeFileDownloadResponse(msg)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[!] Bad file download response: %v\n", err)
+					continue
+				}
+				mgr.HandleDownloadResponse(sessionID, resp)
+			case protocol.MsgFileUploadResponse:
+				resp, err := protocol.DecodeFileUploadResponse(msg)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[!] Bad file upload response: %v\n", err)
+					continue
+				}
+				mgr.HandleUploadResponse(sessionID, resp)
 			default:
 				fmt.Fprintf(os.Stderr, "[!] Unexpected message from agent: %s\n", msg.Type)
 			}

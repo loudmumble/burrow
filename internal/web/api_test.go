@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/loudmumble/burrow/internal/protocol"
 )
 
 // mockProvider implements SessionProvider with canned data.
@@ -152,6 +154,20 @@ func (m *mockProvider) StopTun(sessionID string) error   { return nil }
 func (m *mockProvider) IsTunActive(sessionID string) bool { return false }
 func (m *mockProvider) ExecCommand(sessionID, command string) (string, error) {
 	return "mock exec output", nil
+}
+func (m *mockProvider) DownloadFile(sessionID, filePath string) (*protocol.FileDownloadResponsePayload, error) {
+	return &protocol.FileDownloadResponsePayload{
+		ID:       "dl1",
+		FileName: "test.txt",
+		Data:     []byte("mock file data"),
+		Size:     14,
+	}, nil
+}
+func (m *mockProvider) UploadFile(sessionID, filePath string, data []byte) (*protocol.FileUploadResponsePayload, error) {
+	return &protocol.FileUploadResponsePayload{
+		ID:   "ul1",
+		Size: int64(len(data)),
+	}, nil
 }
 
 type authTransport struct {

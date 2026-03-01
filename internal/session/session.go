@@ -55,6 +55,8 @@ type AgentConn struct {
 	socksServer *proxy.SOCKS5
 	socksCancel context.CancelFunc
 	execResults map[string]chan *protocol.ExecResponsePayload
+	downloadResults map[string]chan *protocol.FileDownloadResponsePayload
+	uploadResults   map[string]chan *protocol.FileUploadResponsePayload
 }
 
 // Manager tracks all active agent sessions.
@@ -114,7 +116,9 @@ func (m *Manager) Add(info *Info) {
 		Info:       info,
 		tunnels:    make(map[string]*web.TunnelInfo),
 		routes:     make(map[string]*web.RouteInfo),
-		execResults: make(map[string]chan *protocol.ExecResponsePayload),
+		execResults:     make(map[string]chan *protocol.ExecResponsePayload),
+		downloadResults: make(map[string]chan *protocol.FileDownloadResponsePayload),
+		uploadResults:   make(map[string]chan *protocol.FileUploadResponsePayload),
 	}
 }
 // AddConn registers a new session with its mux session and control stream.
@@ -127,7 +131,9 @@ func (m *Manager) AddConn(info *Info, muxSess *mux.Session, ctrl net.Conn) {
 		Ctrl:        ctrl,
 		tunnels:     make(map[string]*web.TunnelInfo),
 		routes:      make(map[string]*web.RouteInfo),
-		execResults: make(map[string]chan *protocol.ExecResponsePayload),
+		execResults:     make(map[string]chan *protocol.ExecResponsePayload),
+		downloadResults: make(map[string]chan *protocol.FileDownloadResponsePayload),
+		uploadResults:   make(map[string]chan *protocol.FileUploadResponsePayload),
 	}
 }
 
@@ -1069,6 +1075,149 @@ func (m *Manager) HandleExecResponse(sessionID string, resp *protocol.ExecRespon
 	}
 	ac.mu.RLock()
 	ch, ok := ac.execResults[resp.ID]
+	ac.mu.RUnlock()
+	if ok {
+		select {
+		case ch <- resp:
+		default:
+		}
+	}
+}
+
+// --- File Transfer ---
+
+// DownloadFile sends a file download request to the agent and waits for the response.
+// Returns the file data or an error. Timeout is 120 seconds.
+func (m *Manager) DownloadFile(sessionID, filePath string) (*protocol.FileDownloadResponsePayload, error) {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return nil, fmt.Errorf("session %s not found", sessionID)
+	}
+	if ac.Ctrl == nil {
+		return nil, fmt.Errorf("session %s has no control stream", sessionID)
+	}
+
+	dlID := genID()
+	resultCh := make(chan *protocol.FileDownloadResponsePayload, 1)
+
+	ac.mu.Lock()
+	if ac.downloadResults == nil {
+		ac.downloadResults = make(map[string]chan *protocol.FileDownloadResponsePayload)
+	}
+	ac.downloadResults[dlID] = resultCh
+	ac.mu.Unlock()
+
+	defer func() {
+		ac.mu.Lock()
+		delete(ac.downloadResults, dlID)
+		ac.mu.Unlock()
+	}()
+
+	req := &protocol.FileDownloadRequestPayload{
+		ID:       dlID,
+		FilePath: filePath,
+	}
+	msg, err := protocol.EncodeFileDownloadRequest(req)
+	if err != nil {
+		return nil, fmt.Errorf("encode file download request: %w", err)
+	}
+	ac.writeMu.Lock()
+	err = protocol.WriteMessage(ac.Ctrl, msg)
+	ac.writeMu.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("send file download request: %w", err)
+	}
+
+	select {
+	case resp := <-resultCh:
+		if resp.Error != "" {
+			return resp, fmt.Errorf("%s", resp.Error)
+		}
+		return resp, nil
+	case <-time.After(120 * time.Second):
+		return nil, fmt.Errorf("file download timeout after 120s")
+	}
+}
+
+// HandleDownloadResponse routes a file download response to the waiting caller.
+func (m *Manager) HandleDownloadResponse(sessionID string, resp *protocol.FileDownloadResponsePayload) {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return
+	}
+	ac.mu.RLock()
+	ch, ok := ac.downloadResults[resp.ID]
+	ac.mu.RUnlock()
+	if ok {
+		select {
+		case ch <- resp:
+		default:
+		}
+	}
+}
+
+// UploadFile sends a file upload request to the agent and waits for the response.
+// Returns the response or an error. Timeout is 120 seconds.
+func (m *Manager) UploadFile(sessionID, filePath string, data []byte) (*protocol.FileUploadResponsePayload, error) {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return nil, fmt.Errorf("session %s not found", sessionID)
+	}
+	if ac.Ctrl == nil {
+		return nil, fmt.Errorf("session %s has no control stream", sessionID)
+	}
+
+	ulID := genID()
+	resultCh := make(chan *protocol.FileUploadResponsePayload, 1)
+
+	ac.mu.Lock()
+	if ac.uploadResults == nil {
+		ac.uploadResults = make(map[string]chan *protocol.FileUploadResponsePayload)
+	}
+	ac.uploadResults[ulID] = resultCh
+	ac.mu.Unlock()
+
+	defer func() {
+		ac.mu.Lock()
+		delete(ac.uploadResults, ulID)
+		ac.mu.Unlock()
+	}()
+
+	req := &protocol.FileUploadRequestPayload{
+		ID:       ulID,
+		FilePath: filePath,
+		Data:     data,
+	}
+	msg, err := protocol.EncodeFileUploadRequest(req)
+	if err != nil {
+		return nil, fmt.Errorf("encode file upload request: %w", err)
+	}
+	ac.writeMu.Lock()
+	err = protocol.WriteMessage(ac.Ctrl, msg)
+	ac.writeMu.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("send file upload request: %w", err)
+	}
+
+	select {
+	case resp := <-resultCh:
+		if resp.Error != "" {
+			return resp, fmt.Errorf("%s", resp.Error)
+		}
+		return resp, nil
+	case <-time.After(120 * time.Second):
+		return nil, fmt.Errorf("file upload timeout after 120s")
+	}
+}
+
+// HandleUploadResponse routes a file upload response to the waiting caller.
+func (m *Manager) HandleUploadResponse(sessionID string, resp *protocol.FileUploadResponsePayload) {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return
+	}
+	ac.mu.RLock()
+	ch, ok := ac.uploadResults[resp.ID]
 	ac.mu.RUnlock()
 	if ok {
 		select {

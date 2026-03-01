@@ -63,6 +63,15 @@ const (
 	// MsgExecResponse is sent by the agent with command execution results.
 	MsgExecResponse MessageType = 0x61
 
+	// MsgFileDownloadRequest is sent by the proxy to request a file download from the agent.
+	MsgFileDownloadRequest MessageType = 0x70
+	// MsgFileDownloadResponse is sent by the agent with the requested file data.
+	MsgFileDownloadResponse MessageType = 0x71
+	// MsgFileUploadRequest is sent by the proxy to upload a file to the agent.
+	MsgFileUploadRequest MessageType = 0x72
+	// MsgFileUploadResponse is sent by the agent to confirm a file upload.
+	MsgFileUploadResponse MessageType = 0x73
+
 	// MsgError carries an error string.
 	MsgError MessageType = 0xFF
 )
@@ -102,6 +111,14 @@ func (m MessageType) String() string {
 		return "ExecRequest"
 	case MsgExecResponse:
 		return "ExecResponse"
+	case MsgFileDownloadRequest:
+		return "FileDownloadRequest"
+	case MsgFileDownloadResponse:
+		return "FileDownloadResponse"
+	case MsgFileUploadRequest:
+		return "FileUploadRequest"
+	case MsgFileUploadResponse:
+		return "FileUploadResponse"
 	case MsgError:
 		return "Error"
 	default:
@@ -186,6 +203,35 @@ type ExecResponsePayload struct {
 	ID     string `json:"id"`
 	Output string `json:"output"`
 	Error  string `json:"error,omitempty"`
+}
+
+// FileDownloadRequestPayload is sent by the proxy to request a file from the agent.
+type FileDownloadRequestPayload struct {
+	ID       string `json:"id"`
+	FilePath string `json:"file_path"`
+}
+
+// FileDownloadResponsePayload is sent by the agent with the requested file data.
+type FileDownloadResponsePayload struct {
+	ID       string `json:"id"`
+	FileName string `json:"file_name"`
+	Data     []byte `json:"data"`
+	Size     int64  `json:"size"`
+	Error    string `json:"error,omitempty"`
+}
+
+// FileUploadRequestPayload is sent by the proxy to upload a file to the agent.
+type FileUploadRequestPayload struct {
+	ID       string `json:"id"`
+	FilePath string `json:"file_path"`
+	Data     []byte `json:"data"`
+}
+
+// FileUploadResponsePayload is sent by the agent to confirm a file upload.
+type FileUploadResponsePayload struct {
+	ID    string `json:"id"`
+	Size  int64  `json:"size"`
+	Error string `json:"error,omitempty"`
 }
 
 // --- Wire format ---
@@ -520,6 +566,92 @@ func DecodeExecResponse(msg *Message) (*ExecResponsePayload, error) {
 	var p ExecResponsePayload
 	if err := json.Unmarshal(msg.Payload, &p); err != nil {
 		return nil, fmt.Errorf("unmarshal exec response: %w", err)
+	}
+	return &p, nil
+}
+
+// --- File transfer payload helpers ---
+
+// EncodeFileDownloadRequest creates a FileDownloadRequest message from the given payload.
+func EncodeFileDownloadRequest(p *FileDownloadRequestPayload) (*Message, error) {
+	data, err := json.Marshal(p)
+	if err != nil {
+		return nil, fmt.Errorf("marshal file download request: %w", err)
+	}
+	return &Message{Type: MsgFileDownloadRequest, Payload: data}, nil
+}
+
+// DecodeFileDownloadRequest extracts a FileDownloadRequestPayload from a message.
+func DecodeFileDownloadRequest(msg *Message) (*FileDownloadRequestPayload, error) {
+	if msg.Type != MsgFileDownloadRequest {
+		return nil, fmt.Errorf("%w: got %s, want FileDownloadRequest", ErrTypeMismatch, msg.Type)
+	}
+	var p FileDownloadRequestPayload
+	if err := json.Unmarshal(msg.Payload, &p); err != nil {
+		return nil, fmt.Errorf("unmarshal file download request: %w", err)
+	}
+	return &p, nil
+}
+
+// EncodeFileDownloadResponse creates a FileDownloadResponse message from the given payload.
+func EncodeFileDownloadResponse(p *FileDownloadResponsePayload) (*Message, error) {
+	data, err := json.Marshal(p)
+	if err != nil {
+		return nil, fmt.Errorf("marshal file download response: %w", err)
+	}
+	return &Message{Type: MsgFileDownloadResponse, Payload: data}, nil
+}
+
+// DecodeFileDownloadResponse extracts a FileDownloadResponsePayload from a message.
+func DecodeFileDownloadResponse(msg *Message) (*FileDownloadResponsePayload, error) {
+	if msg.Type != MsgFileDownloadResponse {
+		return nil, fmt.Errorf("%w: got %s, want FileDownloadResponse", ErrTypeMismatch, msg.Type)
+	}
+	var p FileDownloadResponsePayload
+	if err := json.Unmarshal(msg.Payload, &p); err != nil {
+		return nil, fmt.Errorf("unmarshal file download response: %w", err)
+	}
+	return &p, nil
+}
+
+// EncodeFileUploadRequest creates a FileUploadRequest message from the given payload.
+func EncodeFileUploadRequest(p *FileUploadRequestPayload) (*Message, error) {
+	data, err := json.Marshal(p)
+	if err != nil {
+		return nil, fmt.Errorf("marshal file upload request: %w", err)
+	}
+	return &Message{Type: MsgFileUploadRequest, Payload: data}, nil
+}
+
+// DecodeFileUploadRequest extracts a FileUploadRequestPayload from a message.
+func DecodeFileUploadRequest(msg *Message) (*FileUploadRequestPayload, error) {
+	if msg.Type != MsgFileUploadRequest {
+		return nil, fmt.Errorf("%w: got %s, want FileUploadRequest", ErrTypeMismatch, msg.Type)
+	}
+	var p FileUploadRequestPayload
+	if err := json.Unmarshal(msg.Payload, &p); err != nil {
+		return nil, fmt.Errorf("unmarshal file upload request: %w", err)
+	}
+	return &p, nil
+}
+
+// EncodeFileUploadResponse creates a FileUploadResponse message from the given payload.
+func EncodeFileUploadResponse(p *FileUploadResponsePayload) (*Message, error) {
+	data, err := json.Marshal(p)
+	if err != nil {
+		return nil, fmt.Errorf("marshal file upload response: %w", err)
+	}
+	return &Message{Type: MsgFileUploadResponse, Payload: data}, nil
+}
+
+// DecodeFileUploadResponse extracts a FileUploadResponsePayload from a message.
+func DecodeFileUploadResponse(msg *Message) (*FileUploadResponsePayload, error) {
+	if msg.Type != MsgFileUploadResponse {
+		return nil, fmt.Errorf("%w: got %s, want FileUploadResponse", ErrTypeMismatch, msg.Type)
+	}
+	var p FileUploadResponsePayload
+	if err := json.Unmarshal(msg.Payload, &p); err != nil {
+		return nil, fmt.Errorf("unmarshal file upload response: %w", err)
 	}
 	return &p, nil
 }
