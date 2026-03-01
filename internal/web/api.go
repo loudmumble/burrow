@@ -138,6 +138,8 @@ func registerAPIRoutes(mux *http.ServeMux, provider SessionProvider, apiToken st
 	mux.HandleFunc("POST /api/sessions/{id}/tunnels/{tid}/stop", h.AuthMiddleware(http.HandlerFunc(h.stopTunnel)))
 	mux.HandleFunc("POST /api/sessions/{id}/tunnels/{tid}/start", h.AuthMiddleware(http.HandlerFunc(h.startTunnel)))
 	mux.HandleFunc("POST /api/sessions/{id}/exec", h.AuthMiddleware(http.HandlerFunc(h.execCommand)))
+	mux.HandleFunc("POST /api/sessions/{id}/download", h.AuthMiddleware(http.HandlerFunc(h.downloadFile)))
+	mux.HandleFunc("POST /api/sessions/{id}/upload", h.AuthMiddleware(http.HandlerFunc(h.uploadFile)))
 	}
 
 func (h *apiHandler) listSessions(w http.ResponseWriter, r *http.Request) {
@@ -304,4 +306,63 @@ func (h *apiHandler) execCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"output": output})
+}
+
+func (h *apiHandler) downloadFile(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	var req struct {
+		FilePath string `json:"file_path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.FilePath == "" {
+		writeError(w, http.StatusBadRequest, "file_path is required")
+		return
+	}
+
+	resp, err := h.provider.DownloadFile(id, req.FilePath)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if resp.Error != "" {
+		writeJSON(w, http.StatusOK, map[string]string{"error": resp.Error})
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *apiHandler) uploadFile(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	var req struct {
+		FilePath string `json:"file_path"`
+		Data     []byte `json:"data"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.FilePath == "" {
+		writeError(w, http.StatusBadRequest, "file_path is required")
+		return
+	}
+	if len(req.Data) == 0 {
+		writeError(w, http.StatusBadRequest, "data is required")
+		return
+	}
+
+	resp, err := h.provider.UploadFile(id, req.FilePath, req.Data)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if resp.Error != "" {
+		writeJSON(w, http.StatusOK, map[string]string{"error": resp.Error})
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
