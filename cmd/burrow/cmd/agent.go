@@ -521,8 +521,7 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 						protocol.WriteMessage(ctrl, respMsg)
 					}
 				}(req.ID, req.FilePath, req.Data)
-
-
+			case protocol.MsgError:
 				errStr, _ := protocol.DecodeError(msg)
 				return fmt.Errorf("server error: %s", errStr)
 
