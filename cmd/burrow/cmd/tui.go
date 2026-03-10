@@ -165,6 +165,7 @@ type tuiModel struct {
 	// Viewports for scrollable lists
 	sessVP   viewport.Model
 	detailVP viewport.Model
+	serverFingerprint string
 }
 
 // ── Init ────────────────────────────────────────────────────────────────────
@@ -1069,6 +1070,15 @@ func (m tuiModel) renderBanner(b *strings.Builder) {
 	b.WriteString(title + "\n")
 	b.WriteString(title2 + "\n")
 	b.WriteString(title3 + "  " + stDim.Render("v"+version+" │ pentest pivoting") + "\n")
+	// TLS fingerprint — always visible in the header for easy mouse-copy.
+	fpLabel := stDim.Render("  FP: ")
+	var fpValue string
+	if m.serverFingerprint == "" {
+		fpValue = stDim.Render("(no TLS)")
+	} else {
+		fpValue = stCyan.Render(m.serverFingerprint)
+	}
+	b.WriteString(fpLabel + fpValue + "\n")
 }
 
 // ── Status Bar ──────────────────────────────────────────────────────────────
@@ -1679,7 +1689,9 @@ func tuiTruncate(s string, maxLen int) string {
 
 // RunTUI launches the interactive TUI dashboard, talking directly to the
 // session.Manager in-process (no HTTP). Blocks until the user exits.
-func RunTUI(mgr *session.Manager) error {
+// fingerprint is the server TLS certificate SHA-256 fingerprint to display
+// in the dashboard header; pass empty string when TLS is disabled.
+func RunTUI(mgr *session.Manager, fingerprint string) error {
 	sp := spinner.New()
 	sp.Spinner = spinner.Spinner{
 		Frames: []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
@@ -1688,13 +1700,14 @@ func RunTUI(mgr *session.Manager) error {
 	sp.Style = stCyan
 
 	m := tuiModel{
-		mgr:       mgr,
-		rates:     make(map[string]*rateSnapshot),
-		logs:      newLogRing(20),
-		startTime: time.Now(),
-		spinner:   sp,
-		sessVP:    viewport.New(80, 20),
-		detailVP:  viewport.New(80, 20),
+		mgr:               mgr,
+		rates:             make(map[string]*rateSnapshot),
+		logs:              newLogRing(20),
+		startTime:         time.Now(),
+		spinner:           sp,
+		sessVP:            viewport.New(80, 20),
+		detailVP:          viewport.New(80, 20),
+		serverFingerprint: fingerprint,
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())

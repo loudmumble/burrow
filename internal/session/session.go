@@ -386,8 +386,11 @@ func (m *Manager) RemoveTunnel(sessionID, tunnelID string) error {
 	if ac.Ctrl != nil {
 		msg := protocol.EncodeTunnelClose(tunnelID)
 		ac.writeMu.Lock()
-		protocol.WriteMessage(ac.Ctrl, msg)
+		err := protocol.WriteMessage(ac.Ctrl, msg)
 		ac.writeMu.Unlock()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[!] RemoveTunnel: send close to agent %s: %v\n", sessionID, err)
+		}
 	}
 
 	ac.mu.Lock()
@@ -419,8 +422,11 @@ func (m *Manager) StopTunnel(sessionID, tunnelID string) error {
 	if ac.Ctrl != nil {
 		msg := protocol.EncodeTunnelClose(tunnelID)
 		ac.writeMu.Lock()
-		protocol.WriteMessage(ac.Ctrl, msg)
+		err := protocol.WriteMessage(ac.Ctrl, msg)
 		ac.writeMu.Unlock()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[!] StopTunnel: send close to agent %s: %v\n", sessionID, err)
+		}
 	}
 
 	// Mark inactive but keep in map.
@@ -788,8 +794,8 @@ func (m *Manager) StopTun(sessionID string) error {
 			ac.tunStream = nil
 		}
 		ac.tunActive = false
-		ac.mu.Unlock()
 		ac.tunReady = nil
+		ac.mu.Unlock()
 
 		// Send MsgTunStop to agent.
 		if ac.Ctrl != nil {

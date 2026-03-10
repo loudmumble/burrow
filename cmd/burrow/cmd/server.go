@@ -79,6 +79,7 @@ func runServer(cmd *cobra.Command, _ []string) {
 
 	var tlsCfg *tls.Config
 	var tlsCert tls.Certificate
+	var fingerprint string
 
 	if !noTLS {
 		var err error
@@ -98,12 +99,16 @@ func runServer(cmd *cobra.Command, _ []string) {
 			fmt.Println("[*] Generated self-signed TLS certificate")
 		}
 
-		fingerprint, err := certgen.FingerprintFromTLSCert(tlsCert)
+		fingerprint, err = certgen.FingerprintFromTLSCert(tlsCert)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[!] Failed to compute fingerprint: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("[*] Fingerprint: %s\n", fingerprint)
+		// Only print fingerprint to stdout when TUI is not active;
+		// when TUI is active, it is displayed in the dashboard header.
+		if !tuiEnabled {
+			fmt.Printf("[*] Fingerprint: %s\n", fingerprint)
+		}
 
 		tlsCfg = certgen.TLSConfig(tlsCert, "")
 	}
@@ -190,7 +195,7 @@ func runServer(cmd *cobra.Command, _ []string) {
 
 	if tuiEnabled {
 		time.Sleep(200 * time.Millisecond)
-		if err := RunTUI(mgr); err != nil {
+		if err := RunTUI(mgr, fingerprint); err != nil {
 			fmt.Fprintf(os.Stderr, "[!] TUI error: %v\n", err)
 			fmt.Println("[*] TUI failed, server still running. Ctrl+C to stop.")
 			sigChan := make(chan os.Signal, 1)

