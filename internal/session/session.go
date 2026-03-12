@@ -161,6 +161,40 @@ func (m *Manager) Remove(id string) {
 		_ = m.StopTun(id)
 	}
 
+	// Clean up SOCKS5 proxy if active.
+	if ac != nil {
+		ac.mu.Lock()
+		socksSrv := ac.socksServer
+		socksCancel := ac.socksCancel
+		ac.socksServer = nil
+		ac.socksCancel = nil
+		ac.mu.Unlock()
+		if socksCancel != nil {
+			socksCancel()
+		}
+		if socksSrv != nil {
+			socksSrv.Stop()
+		}
+
+		// Best-effort close active tunnels — send TunnelClose for each.
+		ac.mu.RLock()
+		tunnelIDs := make([]string, 0, len(ac.tunnels))
+		for tid, t := range ac.tunnels {
+			if t.Active {
+				tunnelIDs = append(tunnelIDs, tid)
+			}
+		}
+		ac.mu.RUnlock()
+		for _, tid := range tunnelIDs {
+			if ac.Ctrl != nil {
+				closeMsg := protocol.EncodeTunnelClose(tid)
+				ac.writeMu.Lock()
+				_ = protocol.WriteMessage(ac.Ctrl, closeMsg) // best-effort
+				ac.writeMu.Unlock()
+			}
+		}
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.sessions, id)
@@ -180,6 +214,27 @@ func (m *Manager) ClearTunPrev() {
 	defer m.mu.Unlock()
 	m.tunPrevHostname = ""
 	m.tunPrevRoutes = nil
+}
+
+// TunPrevRoutes returns a copy of the saved routes from the previous TUN session.
+func (m *Manager) TunPrevRoutes() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	cp := make([]string, len(m.tunPrevRoutes))
+	copy(cp, m.tunPrevRoutes)
+	return cp
+}
+
+// FindByHostname returns the session ID for a given hostname, if one exists.
+func (m *Manager) FindByHostname(hostname string) (string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for id, ac := range m.sessions {
+		if ac.Info.Hostname == hostname {
+			return id, true
+		}
+	}
+	return "", false
 }
 
 // Count returns the number of active sessions.

@@ -317,7 +317,11 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 						ackPayload.BoundAddr = t.Addr()
 						activeTunnels[req.ID] = t
 					}
-					ackMsg, _ := protocol.EncodeTunnelAck(ackPayload)
+					ackMsg, encErr := protocol.EncodeTunnelAck(ackPayload)
+					if encErr != nil {
+						fmt.Fprintf(os.Stderr, "[!] Encode tunnel ack: %v\n", encErr)
+						continue
+					}
 					ctrlMu.Lock()
 					protocol.WriteMessage(ctrl, ackMsg)
 					ctrlMu.Unlock()
@@ -333,7 +337,11 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 						activeListeners[req.ID] = ln
 						go remoteTunnelAcceptLoop(ctx, ln, sess, req.RemoteAddr)
 					}
-					ackMsg, _ := protocol.EncodeTunnelAck(ackPayload)
+					ackMsg, encErr := protocol.EncodeTunnelAck(ackPayload)
+					if encErr != nil {
+						fmt.Fprintf(os.Stderr, "[!] Encode tunnel ack: %v\n", encErr)
+						continue
+					}
 					ctrlMu.Lock()
 					protocol.WriteMessage(ctrl, ackMsg)
 					ctrlMu.Unlock()
@@ -343,7 +351,11 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 						ID:    req.ID,
 						Error: fmt.Sprintf("unknown direction: %s", req.Direction),
 					}
-					ackMsg, _ := protocol.EncodeTunnelAck(ackPayload)
+					ackMsg, encErr := protocol.EncodeTunnelAck(ackPayload)
+					if encErr != nil {
+						fmt.Fprintf(os.Stderr, "[!] Encode tunnel ack: %v\n", encErr)
+						continue
+					}
 					ctrlMu.Lock()
 					protocol.WriteMessage(ctrl, ackMsg)
 					ctrlMu.Unlock()
@@ -403,7 +415,11 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 					activeListeners[req.ID] = ln
 					go acceptAndRelay(ctx, ln, req.ForwardAddr)
 				}
-				ackMsg, _ := protocol.EncodeListenerAck(ackPayload)
+				ackMsg, encErr := protocol.EncodeListenerAck(ackPayload)
+				if encErr != nil {
+					fmt.Fprintf(os.Stderr, "[!] Encode listener ack: %v\n", encErr)
+					continue
+				}
 				ctrlMu.Lock()
 				protocol.WriteMessage(ctrl, ackMsg)
 				ctrlMu.Unlock()
@@ -420,7 +436,11 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 				if nsErr != nil {
 					ackPayload.Error = nsErr.Error()
 				}
-				ackMsg, _ := protocol.EncodeTunStartAck(ackPayload)
+				ackMsg, encErr := protocol.EncodeTunStartAck(ackPayload)
+				if encErr != nil {
+					fmt.Fprintf(os.Stderr, "[!] Encode TUN start ack: %v\n", encErr)
+					continue
+				}
 				ctrlMu.Lock()
 				protocol.WriteMessage(ctrl, ackMsg)
 				ctrlMu.Unlock()
@@ -487,12 +507,14 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 					if execErr != nil {
 						resp.Error = execErr.Error()
 					}
-					respMsg, _ := protocol.EncodeExecResponse(resp)
-					if respMsg != nil {
-						ctrlMu.Lock()
-						protocol.WriteMessage(ctrl, respMsg)
-						ctrlMu.Unlock()
+					respMsg, encErr := protocol.EncodeExecResponse(resp)
+					if encErr != nil {
+						fmt.Fprintf(os.Stderr, "[!] Encode exec response: %v\n", encErr)
+						return
 					}
+					ctrlMu.Lock()
+					protocol.WriteMessage(ctrl, respMsg)
+					ctrlMu.Unlock()
 				}(req.ID, req.Command)
 
 			case protocol.MsgFileDownloadRequest:
@@ -512,12 +534,14 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 						resp.Data = data
 						resp.Size = int64(len(data))
 					}
-					respMsg, _ := protocol.EncodeFileDownloadResponse(resp)
-					if respMsg != nil {
-						ctrlMu.Lock()
-						protocol.WriteMessage(ctrl, respMsg)
-						ctrlMu.Unlock()
+					respMsg, encErr := protocol.EncodeFileDownloadResponse(resp)
+					if encErr != nil {
+						fmt.Fprintf(os.Stderr, "[!] Encode file download response: %v\n", encErr)
+						return
 					}
+					ctrlMu.Lock()
+					protocol.WriteMessage(ctrl, respMsg)
+					ctrlMu.Unlock()
 				}(req.ID, req.FilePath)
 
 			case protocol.MsgFileUploadRequest:
@@ -535,12 +559,14 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 					} else {
 						resp.Size = int64(len(data))
 					}
-					respMsg, _ := protocol.EncodeFileUploadResponse(resp)
-					if respMsg != nil {
-						ctrlMu.Lock()
-						protocol.WriteMessage(ctrl, respMsg)
-						ctrlMu.Unlock()
+					respMsg, encErr := protocol.EncodeFileUploadResponse(resp)
+					if encErr != nil {
+						fmt.Fprintf(os.Stderr, "[!] Encode file upload response: %v\n", encErr)
+						return
 					}
+					ctrlMu.Lock()
+					protocol.WriteMessage(ctrl, respMsg)
+					ctrlMu.Unlock()
 				}(req.ID, req.FilePath, req.Data)
 			case protocol.MsgError:
 				errStr, _ := protocol.DecodeError(msg)

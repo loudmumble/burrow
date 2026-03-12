@@ -125,7 +125,6 @@ type rateSnapshot struct {
 type tuiTickMsg time.Time
 type tuiActionDoneMsg string
 type tuiActionErrMsg struct{ err error }
-type tuiSpinnerTickMsg struct{} // unused, spinner handled internally
 type tuiExecResultMsg struct{ output string; err error }
 type tuiDownloadResultMsg struct{ fileName string; size int64; err error }
 type tuiUploadResultMsg struct{ size int64; err error }
@@ -166,6 +165,7 @@ type tuiModel struct {
 	sessVP   viewport.Model
 	detailVP viewport.Model
 	serverFingerprint string
+	serverLogBuf      *tuiLogCapture
 }
 
 // ── Init ────────────────────────────────────────────────────────────────────
@@ -201,6 +201,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiTickMsg:
 		m.clearExpiredError()
+		if m.serverLogBuf != nil {
+			for _, entry := range m.serverLogBuf.drain() {
+				m.logs.add(entry)
+			}
+		}
 		m.refreshData()
 		return m, tuiTickCmd()
 
@@ -798,7 +803,7 @@ func (m *tuiModel) doExecCommand(sessionID, command string) tea.Cmd {
 }
 
 func (m tuiModel) viewExecForm(b *strings.Builder) {
-	m.renderBanner(b)
+	m.renderCompactBanner(b)
 	b.WriteString("\n")
 	b.WriteString(stAccent.Bold(true).Render("  Execute Command"))
 	b.WriteString("\n")
@@ -941,7 +946,7 @@ func (m *tuiModel) doUploadFile(sessionID, localPath, remotePath string) tea.Cmd
 }
 
 func (m tuiModel) viewDownloadForm(b *strings.Builder) {
-	m.renderBanner(b)
+	m.renderCompactBanner(b)
 	b.WriteString("\n")
 	b.WriteString(stAccent.Bold(true).Render("  Download File"))
 	b.WriteString("\n")
@@ -974,7 +979,7 @@ func (m tuiModel) viewDownloadForm(b *strings.Builder) {
 }
 
 func (m tuiModel) viewUploadForm(b *strings.Builder) {
-	m.renderBanner(b)
+	m.renderCompactBanner(b)
 	b.WriteString("\n")
 	b.WriteString(stAccent.Bold(true).Render("  Upload File"))
 	b.WriteString(stFieldCtr.Render(fmt.Sprintf("  (Field %d/%d)", m.inputCursor+1, len(m.inputFields))))
@@ -1081,6 +1086,14 @@ func (m tuiModel) renderBanner(b *strings.Builder) {
 	b.WriteString(fpLabel + fpValue + "\n")
 }
 
+func (m tuiModel) renderCompactBanner(b *strings.Builder) {
+	fpStr := stDim.Render("(no TLS)")
+	if m.serverFingerprint != "" {
+		fpStr = stCyan.Render(m.serverFingerprint)
+	}
+	b.WriteString(stAccent.Bold(true).Render("  BURROW v"+version) + stDim.Render(" │ FP: ") + fpStr + "\n")
+}
+
 // ── Status Bar ──────────────────────────────────────────────────────────────
 
 func (m tuiModel) renderStatusBar() string {
@@ -1153,70 +1166,53 @@ func (m tuiModel) viewSessions(b *strings.Builder) {
 		b.WriteString(stDim.Render("  No sessions. Waiting for agents to connect...") + "\n")
 	} else {
 		// Header
-		hdr := fmt.Sprintf("  %-18s %-12s %-6s %-18s %-7s %-6s %-7s %12s %12s  %-10s  %-6s",
-			"ID", "HOST", "OS", "IPs", "TUN", "SOCKS", "STATUS", "▲ OUT", "▼ IN", "RATE", "UPTIME")
+		// Compact header: ID(8), HOST(10), IPs(14), FLAGS(T/S dots), ●, ▲OUT, ▼IN, UPTIME
+		hdr := fmt.Sprintf("  %-8s  %-10s  %-14s  %-5s %8s  %8s  %-6s",
+			"ID", "HOST", "IPs", "FLAGS", "▲ OUT", "▼ IN", "UPTIME")
 		b.WriteString(stHeader.Render(hdr) + "\n")
 		b.WriteString(renderSep(m.width) + "\n")
 
 		for i, s := range m.sessions {
 			ips := strings.Join(s.IPs, ",")
-			if len(ips) > 16 {
-				ips = ips[:13] + "..."
+			if len(ips) > 14 {
+				ips = ips[:11] + "..."
 			}
 
-			statusStr := stRed.Render("dead  ")
-			if s.Active {
-				statusStr = stGreen.Render("active")
-			}
-
-			tunStr := stDim.Render("── ")
+			// FLAGS: TUN(T/·) + SOCKS(S/·) indicator
+			var flagT, flagS string
 			if s.TunActive {
-				tunStr = stGreen.Bold(true).Render("TUN")
+				flagT = stGreen.Render("T")
+			} else {
+				flagT = stDim.Render("·")
 			}
-
-			socksStr := stDim.Render("── ")
 			if s.SocksAddr != "" {
-				socksStr = stGreen.Render("SOC")
+				flagS = stGreen.Render("S")
+			} else {
+				flagS = stDim.Render("·")
 			}
+			flags := flagT + flagS
 
-			// Health indicator (green dot = active)
+			// STATUS as colored dot
 			healthDot := stGreen.Render("●")
 			if !s.Active {
 				healthDot = stRed.Render("●")
 			}
 
-			// Rate
-			rate := m.rates[s.ID]
-			rateStr := ""
-			if rate != nil && (rate.rateIn > 0 || rate.rateOut > 0) {
-				rateStr = fmt.Sprintf("▲%s ▼%s",
-					tuiFormatRate(rate.rateOut), tuiFormatRate(rate.rateIn))
-			}
-
-			cols := fmt.Sprintf("%-18s %-12s %-6s %-18s",
-				tuiTruncate(s.ID, 16),
-				tuiTruncate(s.Hostname, 10),
-				tuiTruncate(s.OS, 4),
-				ips)
-
 			bwOut := tuiColorBytes(s.BytesOut)
 			bwIn := tuiColorBytes(s.BytesIn)
-
 			uptime := tuiFormatUptime(s.CreatedAt)
 
-			// Bandwidth bar
-			bwBar := renderBwBar(m.rates[s.ID])
-
-			line := fmt.Sprintf("%s %s %s %s %12s %12s  %-10s  %-6s %s",
-				cols, tunStr, socksStr, statusStr, bwOut, bwIn,
-				rateStr, uptime, bwBar)
+			cols := fmt.Sprintf("  %-8s  %-10s  %-14s",
+				tuiTruncate(s.ID, 8),
+				tuiTruncate(s.Hostname, 10),
+				ips)
+			line := cols + "  " + flags + " " + healthDot + "  " + bwOut + "  " + bwIn + "  " + fmt.Sprintf("%-6s", uptime)
 
 			if i == m.cursor {
-				// Full-width highlight on selected row
-				highlighted := stSelRow.Width(m.width).Render("▸ " + healthDot + " " + line)
+				highlighted := stSelRow.Width(m.width).Render("▸ " + line[2:])
 				b.WriteString(highlighted + "\n")
 			} else {
-				b.WriteString("  " + healthDot + " " + line + "\n")
+				b.WriteString(line + "\n")
 			}
 		}
 	}
@@ -1238,6 +1234,8 @@ func (m tuiModel) viewSessions(b *strings.Builder) {
 // ── Session Detail View ─────────────────────────────────────────────────────
 
 func (m tuiModel) viewDetail(b *strings.Builder) {
+	m.renderCompactBanner(b)
+	b.WriteString("\n")
 	var sess *web.SessionInfo
 	for i := range m.sessions {
 		if m.sessions[i].ID == m.selected {
@@ -1247,67 +1245,34 @@ func (m tuiModel) viewDetail(b *strings.Builder) {
 	}
 
 	if sess != nil {
-		// Logo block — slightly larger with padding, in its own styled panel
-		logoLines := strings.Join([]string{
-			stAccent.Bold(true).Render("  ╔══╗ ╦ ╦ ╦═╗ ╦═╗ ╔══╗ ╦   ╦  "),
-			stAccent.Bold(true).Render("  ╠══╣ ║ ║ ╠╦╝ ╠╦╝ ║  ║ ║ ╦ ║  "),
-			stAccent.Bold(true).Render("  ╚══╝ ╚═╝ ╩╚═ ╩╚═ ╚══╝ ╚═╝═╝  "),
-			"",
-			stDim.Render("   v" + version + " │ pentest pivoting"),
-		}, "\n")
-		logoBox := lipgloss.NewStyle().
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("205")).
-			Padding(1, 2).
-			Render(logoLines)
-
-		// Info panel
-		boxW := min(m.width-lipgloss.Width(logoBox)-6, 65)
-		if boxW < 30 {
-			boxW = 30
-		}
-
-		statusStr := stRed.Render("inactive")
+		// Compact info bar — line 1: status dot, session, host, OS, TUN, SOCKS
 		healthDot := stRed.Render("●")
 		if sess.Active {
-			statusStr = stGreen.Render("active")
 			healthDot = stGreen.Render("●")
 		}
-
-		tunStr := stDim.Render("TUN --")
+		tunStr := stDim.Render("TUN ──")
 		if sess.TunActive {
-			tunStr = stGreen.Bold(true).Render("TUN UP")
+			tunStr = stGreen.Bold(true).Render("TUN ▲")
 		}
-
 		socksStr := stDim.Render("SOCKS --")
 		if sess.SocksAddr != "" {
 			socksStr = stGreen.Bold(true).Render("SOCKS " + sess.SocksAddr)
 		}
-
+		sep := stDim.Render(" │ ")
+		b.WriteString("  " + healthDot + " " + stBold.Render("Session:") + " " + tuiTruncate(sess.ID, 16) +
+			sep + stBold.Render("Host:") + " " + tuiTruncate(sess.Hostname, 16) +
+			sep + stBold.Render("OS:") + " " + sess.OS +
+			sep + tunStr + sep + socksStr + "\n")
+		// Compact info bar — line 2: IPs, bandwidth, rate, uptime
 		rate := m.rates[sess.ID]
-		rateStr := ""
-		if rate != nil {
-			rateStr = fmt.Sprintf("▲ %s/s  ▼ %s/s", tuiFormatRate(rate.rateOut), tuiFormatRate(rate.rateIn))
+		rateStr := stDim.Render("--")
+		if rate != nil && (rate.rateIn > 0 || rate.rateOut > 0) {
+			rateStr = stCyan.Render(fmt.Sprintf("%s/s", tuiFormatRate(rate.rateOut+rate.rateIn)))
 		}
-
-		bwBar := renderBwBar(rate)
-
-		infoContent := strings.Join([]string{
-			fmt.Sprintf("  %s Session:   %s", healthDot, sess.ID),
-			fmt.Sprintf("  Hostname:  %s", sess.Hostname),
-			fmt.Sprintf("  OS:        %s", sess.OS),
-			fmt.Sprintf("  IPs:       %s", strings.Join(sess.IPs, ", ")),
-			fmt.Sprintf("  Status:    %s  %s  %s", statusStr, tunStr, socksStr),
-			fmt.Sprintf("  Created:   %s (%s ago)", sess.CreatedAt, tuiFormatUptime(sess.CreatedAt)),
-			fmt.Sprintf("  Bandwidth: %s in / %s out  %s", tuiColorBytes(sess.BytesIn), tuiColorBytes(sess.BytesOut), rateStr),
-			fmt.Sprintf("  Rate:      %s", bwBar),
-		}, "\n")
-
-		panel := stPanel.Width(boxW).Render(infoContent)
-
-		// Side-by-side: logo left, session info right
-		composed := lipgloss.JoinHorizontal(lipgloss.Top, logoBox, "  ", panel)
-		b.WriteString(composed + "\n")
+		b.WriteString("  " + stDim.Render("IPs:") + " " + strings.Join(sess.IPs, ", ") +
+			sep + "▲ " + tuiColorBytes(sess.BytesOut) + "  ▼ " + tuiColorBytes(sess.BytesIn) +
+			sep + stDim.Render("Rate:") + " " + rateStr +
+			sep + tuiFormatUptime(sess.CreatedAt) + "\n")
 	} else {
 		b.WriteString(stDim.Render("  Session data not available") + "\n")
 	}
@@ -1344,10 +1309,8 @@ func (m tuiModel) viewDetail(b *strings.Builder) {
 	m.renderLogPanel(b)
 
 	b.WriteString("\n\n")
-	b.WriteString(renderHelpBar([]string{
-		"↑/k up", "↓/j down", "^T TUN", "s SOCKS5", "t tunnel", "r route",
-		"u start", "n stop", "d delete", "x exec", "w download", "p upload", "tab switch", "esc back",
-	}))
+	b.WriteString(renderHelpBar([]string{"\u2191/k up", "\u2193/j down", "tab switch", "esc back"}) + "\n")
+	b.WriteString(renderHelpBar([]string{"^T TUN", "s SOCKS5", "t tunnel", "r route", "u start", "n stop", "d del", "x exec", "w dl", "p up"}))
 }
 
 func (m tuiModel) viewTunnels(b *strings.Builder) {
@@ -1416,7 +1379,7 @@ func (m tuiModel) viewRoutes(b *strings.Builder) {
 // ── Confirm Delete ──────────────────────────────────────────────────────────
 
 func (m tuiModel) viewConfirm(b *strings.Builder) {
-	m.renderBanner(b)
+	m.renderCompactBanner(b)
 	b.WriteString("\n")
 
 	boxW := min(m.width-4, 50)
@@ -1440,7 +1403,7 @@ func (m tuiModel) viewConfirm(b *strings.Builder) {
 // ── Form View ───────────────────────────────────────────────────────────────
 
 func (m tuiModel) viewForm(b *strings.Builder, title string) {
-	m.renderBanner(b)
+	m.renderCompactBanner(b)
 	b.WriteString("\n")
 	b.WriteString(stAccent.Bold(true).Render(fmt.Sprintf("  %s", title)))
 	b.WriteString(stFieldCtr.Render(fmt.Sprintf("  (Field %d/%d)", m.inputCursor+1, len(m.inputFields))))
@@ -1492,11 +1455,11 @@ func (m tuiModel) viewForm(b *strings.Builder, title string) {
 			optStr := strings.Join(parts, "")
 			if focused {
 				b.WriteString("    ┌" + strings.Repeat("─", boxW) + "┐\n")
-				b.WriteString("    │ " + optStr + strings.Repeat(" ", max(0, boxW-1-len(optStr)/2)) + "│\n")
+				b.WriteString("    │ " + optStr + strings.Repeat(" ", max(0, boxW-1-lipgloss.Width(optStr))) + "│\n")
 				b.WriteString("    └" + strings.Repeat("─", boxW) + "┘\n")
 			} else {
 				b.WriteString(stFormBdr.Render("    ┌"+strings.Repeat("─", boxW)+"┐") + "\n")
-				b.WriteString(stFormBdr.Render("    │ ") + optStr + stFormBdr.Render(strings.Repeat(" ", max(0, boxW-1-len(optStr)/2))+"│") + "\n")
+				b.WriteString(stFormBdr.Render("    │ ") + optStr + stFormBdr.Render(strings.Repeat(" ", max(0, boxW-1-lipgloss.Width(optStr)))+"│") + "\n")
 				b.WriteString(stFormBdr.Render("    └"+strings.Repeat("─", boxW)+"┘") + "\n")
 			}
 		} else {
@@ -1537,13 +1500,13 @@ func (m tuiModel) renderLogPanel(b *strings.Builder) {
 		return
 	}
 
-	maxLines := 5
+	maxLines := 8
 	start := 0
 	if len(entries) > maxLines {
 		start = len(entries) - maxLines
 	}
 
-	b.WriteString(stDim.Render("  ── log ") + stDimmer.Render(strings.Repeat("─", max(0, min(m.width-13, 60)))) + "\n")
+	b.WriteString(stDim.Render("  ── log ") + stDimmer.Render(strings.Repeat("─", max(0, m.width-14))) + "\n")
 	for _, e := range entries[start:] {
 		ts := e.ts.Format("15:04:05")
 		b.WriteString(stDimmer.Render("  "+ts+" ") + stDim.Render(tuiTruncate(e.text, m.width-14)) + "\n")
@@ -1691,7 +1654,7 @@ func tuiTruncate(s string, maxLen int) string {
 // session.Manager in-process (no HTTP). Blocks until the user exits.
 // fingerprint is the server TLS certificate SHA-256 fingerprint to display
 // in the dashboard header; pass empty string when TLS is disabled.
-func RunTUI(mgr *session.Manager, fingerprint string) error {
+func RunTUI(mgr *session.Manager, fingerprint string, logBuf *tuiLogCapture) error {
 	sp := spinner.New()
 	sp.Spinner = spinner.Spinner{
 		Frames: []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
@@ -1702,12 +1665,13 @@ func RunTUI(mgr *session.Manager, fingerprint string) error {
 	m := tuiModel{
 		mgr:               mgr,
 		rates:             make(map[string]*rateSnapshot),
-		logs:              newLogRing(20),
+		logs:              newLogRing(50),
 		startTime:         time.Now(),
 		spinner:           sp,
 		sessVP:            viewport.New(80, 20),
 		detailVP:          viewport.New(80, 20),
 		serverFingerprint: fingerprint,
+		serverLogBuf:      logBuf,
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
