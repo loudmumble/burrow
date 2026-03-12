@@ -1109,25 +1109,30 @@ func (m tuiModel) renderBanner(b *strings.Builder) {
 	b.WriteString(title + "\n")
 	b.WriteString(title2 + "\n")
 	b.WriteString(title3 + "  " + stDim.Render("v"+version+" │ pentest pivoting") + "\n")
-	// TLS fingerprint — own line so it fits within 100-col cap.
-	fpLabel := stDim.Render("  FP:")
-	var fpValue string
+	// TLS fingerprint — split across 2 lines for readability within 100 cols
 	if m.serverFingerprint == "" {
-		fpValue = stDim.Render("(no TLS)")
+		b.WriteString(stDim.Render("  FP: (no TLS)") + "\n")
 	} else {
-		fpValue = stCyan.Render(m.serverFingerprint)
-	}
-	b.WriteString(fpLabel + "\n")
-	b.WriteString("  " + fpValue + "\n")
+		fp := m.serverFingerprint
+		mid := len(fp) / 2
+		for mid < len(fp) && fp[mid] != ':' {
+			mid++
+		}
+		if mid < len(fp) {
+			b.WriteString(stDim.Render("  FP: ") + stCyan.Render(fp[:mid]) + "\n")
+			b.WriteString(stDim.Render("      ") + stCyan.Render(fp[mid+1:]) + "\n")
+		} else {
+			b.WriteString(stDim.Render("  FP: ") + stCyan.Render(fp) + "\n")
+		}
+}
 }
 
 func (m tuiModel) renderCompactBanner(b *strings.Builder) {
 	fpStr := stDim.Render("(no TLS)")
 	if m.serverFingerprint != "" {
-		fpStr = stCyan.Render(m.serverFingerprint)
+		fpStr = stCyan.Render(tuiTruncate(m.serverFingerprint, 47))
 	}
-	b.WriteString(stAccent.Bold(true).Render("  BURROW v"+version) + stDim.Render(" │ FP:") + "\n")
-	b.WriteString("  " + fpStr + "\n")
+	b.WriteString(stAccent.Bold(true).Render("  BURROW v"+version) + stDim.Render(" │ FP: ") + fpStr + "\n")
 }
 
 // ── Status Bar ──────────────────────────────────────────────────────────────
@@ -1199,10 +1204,8 @@ func (m tuiModel) viewSessions(b *strings.Builder) {
 	if len(m.sessions) == 0 {
 		b.WriteString(stDim.Render("  No sessions. Waiting for agents to connect...") + "\n")
 	} else {
-		// Header
-		// Compact header: ID(8), HOST(10), IPs(14), FLAGS(T/S dots), ●, ▲OUT, ▼IN, UPTIME
-		hdr := fmt.Sprintf("  %-8s  %-10s  %-14s  %-5s %8s  %8s  %-6s",
-			"ID", "HOST", "IPs", "FLAGS", "▲ OUT", "▼ IN", "UPTIME")
+		hdr := fmt.Sprintf("  %-8s  %-10s  %-14s       %6s  %6s             %-6s",
+			"ID", "HOST", "IPs", "▲ OUT", "▼ IN", "UP")
 		b.WriteString(stHeader.Render(hdr) + "\n")
 		b.WriteString(renderSep(m.width) + "\n")
 
@@ -1232,8 +1235,10 @@ func (m tuiModel) viewSessions(b *strings.Builder) {
 				healthDot = stRed.Render("●")
 			}
 
-			bwOut := tuiColorBytes(s.BytesOut)
-			bwIn := tuiColorBytes(s.BytesIn)
+			bwOutRaw := tuiFormatBytes(s.BytesOut)
+			bwInRaw := tuiFormatBytes(s.BytesIn)
+			bwOut := strings.Repeat(" ", max(0, 6-len(bwOutRaw))) + tuiColorBytes(s.BytesOut)
+			bwIn := strings.Repeat(" ", max(0, 6-len(bwInRaw))) + tuiColorBytes(s.BytesIn)
 			uptime := tuiFormatUptime(s.CreatedAt)
 
 			cols := fmt.Sprintf("  %-8s  %-10s  %-14s",
@@ -1241,7 +1246,7 @@ func (m tuiModel) viewSessions(b *strings.Builder) {
 				tuiTruncate(s.Hostname, 10),
 				ips)
 			bwBar := renderBwBar(m.rates[s.ID])
-			line := cols + "  " + flags + " " + healthDot + "  " + bwOut + "  " + bwIn + "  " + bwBar + " " + fmt.Sprintf("%-6s", uptime)
+			line := cols + " " + flags + " " + healthDot + " " + bwOut + "  " + bwIn + "  " + bwBar + " " + fmt.Sprintf("%-6s", uptime)
 
 			if i == m.cursor {
 				highlighted := stSelRow.Width(m.width).Render("▸ " + line[2:])
@@ -1307,7 +1312,7 @@ func (m tuiModel) viewDetail(b *strings.Builder) {
 		if rate != nil && (rate.rateIn > 0 || rate.rateOut > 0) {
 			rateStr = stCyan.Render(fmt.Sprintf("%s/s", tuiFormatRate(rate.rateOut+rate.rateIn)))
 		}
-		b.WriteString("  ▲ " + tuiColorBytes(sess.BytesOut) + "  ▼ " + tuiColorBytes(sess.BytesIn) +
+		b.WriteString("  " + stGreen.Render("▲") + " " + tuiColorBytes(sess.BytesOut) + "  " + stCyan.Render("▼") + " " + tuiColorBytes(sess.BytesIn) +
 			sep + stDim.Render("Rate:") + " " + rateStr +
 			sep + tuiFormatUptime(sess.CreatedAt) + "\n")
 	} else {
@@ -1532,8 +1537,10 @@ func (m tuiModel) viewForm(b *strings.Builder, title string) {
 // ── Log Panel ───────────────────────────────────────────────────────────────
 
 func (m tuiModel) renderLogPanel(b *strings.Builder) {
+	b.WriteString(stDim.Render("  ── log ") + stDimmer.Render(strings.Repeat("─", max(0, m.width-14))) + "\n")
 	entries := m.logs.all()
 	if len(entries) == 0 {
+		b.WriteString(stDimmer.Render("  (no recent activity)") + "\n")
 		return
 	}
 
@@ -1543,7 +1550,6 @@ func (m tuiModel) renderLogPanel(b *strings.Builder) {
 		start = len(entries) - maxLines
 	}
 
-	b.WriteString(stDim.Render("  ── log ") + stDimmer.Render(strings.Repeat("─", max(0, m.width-14))) + "\n")
 	for _, e := range entries[start:] {
 		ts := e.ts.Format("15:04:05")
 		b.WriteString(stDimmer.Render("  "+ts+" ") + stDim.Render(tuiTruncate(e.text, m.width-14)) + "\n")
