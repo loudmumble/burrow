@@ -189,12 +189,12 @@ func tuiTickCmd() tea.Cmd {
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.sessVP.Width = msg.Width
-		m.sessVP.Height = max(msg.Height-18, 5)
-		m.detailVP.Width = msg.Width
-		m.detailVP.Height = max(msg.Height-22, 5)
+		m.width = min(msg.Width, 100)
+		m.height = min(msg.Height, 30)
+		m.sessVP.Width = m.width
+		m.sessVP.Height = max(m.height-18, 5)
+		m.detailVP.Width = m.width
+		m.detailVP.Height = max(m.height-22, 5)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -1168,9 +1168,8 @@ func (m tuiModel) renderStatusBar() string {
 		stGreen.Render("▲"+tuiFormatBytes(totalOut)) + " " + stCyan.Render("▼"+tuiFormatBytes(totalIn)),
 	}, sep) + spinStr
 
-	// Content width only — no terminal-width padding
-	w := max(lipgloss.Width(line1), lipgloss.Width(line2))
-	return stStatusBar.Width(w).Render(line1) + "\n" + stStatusBar.Width(w).Render(line2)
+	// Status bar spans TUI width (capped at 100)
+	return stStatusBar.Width(m.width).Render(line1) + "\n" + stStatusBar.Width(m.width).Render(line2)
 }
 
 // ── Session List View ───────────────────────────────────────────────────────
