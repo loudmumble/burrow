@@ -1060,7 +1060,6 @@ func (m tuiModel) View() string {
 	}
 
 	// Status bar at bottom
-	b.WriteString("\n")
 	b.WriteString(m.renderStatusBar())
 
 	return b.String()
@@ -1156,7 +1155,6 @@ func (m tuiModel) renderStatusBar() string {
 
 func (m tuiModel) viewSessions(b *strings.Builder) {
 	m.renderBanner(b)
-	b.WriteString("\n")
 
 	if m.err != nil {
 		b.WriteString(stError.Render("  ✗ "+m.err.Error()) + "\n\n")
@@ -1225,7 +1223,7 @@ func (m tuiModel) viewSessions(b *strings.Builder) {
 		b.WriteString("\n" + stGreen.Render("  "+m.statusMsg))
 	}
 
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 	b.WriteString(renderHelpBar([]string{
 		"↑/k up", "↓/j down", "enter select", "^T toggle TUN", "^R refresh", "q quit",
 	}))
@@ -1308,9 +1306,9 @@ func (m tuiModel) viewDetail(b *strings.Builder) {
 	b.WriteString("\n")
 	m.renderLogPanel(b)
 
-	b.WriteString("\n\n")
-	b.WriteString(renderHelpBar([]string{"\u2191/k up", "\u2193/j down", "tab switch", "esc back"}) + "\n")
-	b.WriteString(renderHelpBar([]string{"^T TUN", "s SOCKS5", "t tunnel", "r route", "u start", "n stop", "d del", "x exec", "w dl", "p up"}))
+	b.WriteString("\n")
+	b.WriteString(renderHelpBar([]string{"\u2191/k up", "\u2193/j down", "esc back", "^T TUN", "s SOCKS5", "^R refresh"}) + "\n")
+	b.WriteString(renderHelpBar([]string{"t tunnel", "r route", "u start", "n stop", "d delete", "x exec", "w download", "p upload"}))
 }
 
 func (m tuiModel) viewTunnels(b *strings.Builder) {
