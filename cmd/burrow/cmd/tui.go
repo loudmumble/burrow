@@ -194,7 +194,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessVP.Width = m.width
 		m.sessVP.Height = max(m.height-18, 5)
 		m.detailVP.Width = m.width
-		m.detailVP.Height = max(m.height-22, 5)
+		m.detailVP.Height = max(m.height-23, 5)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -310,6 +310,19 @@ func (m *tuiModel) refreshData() {
 		r.rateOut = float64(deltaOut) / 5.0
 		r.prevIn = s.BytesIn
 		r.prevOut = s.BytesOut
+	}
+	// Clean stale rates for sessions no longer present
+	for id := range m.rates {
+		found := false
+		for _, s := range m.sessions {
+			if s.ID == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			delete(m.rates, id)
+		}
 	}
 
 	if m.view == tuiViewSessionDetail && m.selected != "" {
@@ -1096,15 +1109,16 @@ func (m tuiModel) renderBanner(b *strings.Builder) {
 	b.WriteString(title + "\n")
 	b.WriteString(title2 + "\n")
 	b.WriteString(title3 + "  " + stDim.Render("v"+version+" │ pentest pivoting") + "\n")
-	// TLS fingerprint — always visible in the header for easy mouse-copy.
-	fpLabel := stDim.Render("  FP: ")
+	// TLS fingerprint — own line so it fits within 100-col cap.
+	fpLabel := stDim.Render("  FP:")
 	var fpValue string
 	if m.serverFingerprint == "" {
 		fpValue = stDim.Render("(no TLS)")
 	} else {
 		fpValue = stCyan.Render(m.serverFingerprint)
 	}
-	b.WriteString(fpLabel + fpValue + "\n")
+	b.WriteString(fpLabel + "\n")
+	b.WriteString("  " + fpValue + "\n")
 }
 
 func (m tuiModel) renderCompactBanner(b *strings.Builder) {
@@ -1112,7 +1126,8 @@ func (m tuiModel) renderCompactBanner(b *strings.Builder) {
 	if m.serverFingerprint != "" {
 		fpStr = stCyan.Render(m.serverFingerprint)
 	}
-	b.WriteString(stAccent.Bold(true).Render("  BURROW v"+version) + stDim.Render(" │ FP: ") + fpStr + "\n")
+	b.WriteString(stAccent.Bold(true).Render("  BURROW v"+version) + stDim.Render(" │ FP:") + "\n")
+	b.WriteString("  " + fpStr + "\n")
 }
 
 // ── Status Bar ──────────────────────────────────────────────────────────────
@@ -1265,12 +1280,17 @@ func (m tuiModel) viewDetail(b *strings.Builder) {
 	}
 
 	if sess != nil {
-		// Compact info bar — line 1: status dot, session, host, OS, TUN, SOCKS
+		// Info line 1: session identity
 		healthDot := stRed.Render("●")
 		if sess.Active {
 			healthDot = stGreen.Render("●")
 		}
-		tunStr := stDim.Render("TUN ──")
+		sep := stDim.Render(" │ ")
+		b.WriteString("  " + healthDot + " " + stBold.Render("Session:") + " " + tuiTruncate(sess.ID, 12) +
+			sep + stBold.Render("Host:") + " " + tuiTruncate(sess.Hostname, 12) +
+			sep + stBold.Render("OS:") + " " + tuiTruncate(sess.OS, 10) + "\n")
+		// Info line 2: network status
+		tunStr := stDim.Render("TUN --")
 		if sess.TunActive {
 			tunStr = stGreen.Bold(true).Render("TUN ▲")
 		}
@@ -1278,19 +1298,16 @@ func (m tuiModel) viewDetail(b *strings.Builder) {
 		if sess.SocksAddr != "" {
 			socksStr = stGreen.Bold(true).Render("SOCKS " + sess.SocksAddr)
 		}
-		sep := stDim.Render(" │ ")
-		b.WriteString("  " + healthDot + " " + stBold.Render("Session:") + " " + tuiTruncate(sess.ID, 16) +
-			sep + stBold.Render("Host:") + " " + tuiTruncate(sess.Hostname, 16) +
-			sep + stBold.Render("OS:") + " " + sess.OS +
-			sep + tunStr + sep + socksStr + "\n")
-		// Compact info bar — line 2: IPs, bandwidth, rate, uptime
+		ipsStr := tuiTruncate(strings.Join(sess.IPs, ", "), 28)
+		b.WriteString("  " + tunStr + sep + socksStr +
+			sep + stDim.Render("IPs:") + " " + ipsStr + "\n")
+		// Info line 3: bandwidth + rate + uptime
 		rate := m.rates[sess.ID]
 		rateStr := stDim.Render("--")
 		if rate != nil && (rate.rateIn > 0 || rate.rateOut > 0) {
 			rateStr = stCyan.Render(fmt.Sprintf("%s/s", tuiFormatRate(rate.rateOut+rate.rateIn)))
 		}
-		b.WriteString("  " + stDim.Render("IPs:") + " " + strings.Join(sess.IPs, ", ") +
-			sep + "▲ " + tuiColorBytes(sess.BytesOut) + "  ▼ " + tuiColorBytes(sess.BytesIn) +
+		b.WriteString("  ▲ " + tuiColorBytes(sess.BytesOut) + "  ▼ " + tuiColorBytes(sess.BytesIn) +
 			sep + stDim.Render("Rate:") + " " + rateStr +
 			sep + tuiFormatUptime(sess.CreatedAt) + "\n")
 	} else {
@@ -1339,8 +1356,8 @@ func (m tuiModel) viewTunnels(b *strings.Builder) {
 		return
 	}
 
-	hdr := fmt.Sprintf("  %-16s  %-7s  %-22s  %-22s  %-5s  %10s  %10s  %-7s",
-		"ID", "DIR", "LISTEN", "REMOTE", "PROTO", "▲ OUT", "▼ IN", "STATUS")
+	hdr := fmt.Sprintf("  %-10s %-5s %-18s %-18s %-3s %6s %6s %-6s",
+		"ID", "DIR", "LISTEN", "REMOTE", "PRT", "▲OUT", "▼IN", "STATUS")
 	b.WriteString(stHeader.Render(hdr) + "\n")
 
 	for i, t := range m.tunnels {
@@ -1351,18 +1368,18 @@ func (m tuiModel) viewTunnels(b *strings.Builder) {
 			statusStr = stRed.Render("error ")
 		}
 
-		cols := fmt.Sprintf("%-16s  %-7s  %-22s  %-22s  %-5s",
-			tuiTruncate(t.ID, 16),
-			t.Direction,
-			tuiTruncate(t.ListenAddr, 22),
-			tuiTruncate(t.RemoteAddr, 22),
+		cols := fmt.Sprintf("%-10s %-5s %-18s %-18s %-3s",
+			tuiTruncate(t.ID, 10),
+			tuiTruncate(t.Direction, 5),
+			tuiTruncate(t.ListenAddr, 18),
+			tuiTruncate(t.RemoteAddr, 18),
 			t.Protocol)
 
-		bwStr := fmt.Sprintf("  %10s  %10s", tuiColorBytes(t.BytesOut), tuiColorBytes(t.BytesIn))
+		bwStr := fmt.Sprintf(" %6s %6s", tuiColorBytes(t.BytesOut), tuiColorBytes(t.BytesIn))
 
 		errSuffix := ""
 		if t.Error != "" {
-			errSuffix = " " + stError.Render(tuiTruncate(t.Error, 30))
+			errSuffix = " " + stError.Render(tuiTruncate(t.Error, 15))
 		}
 
 		if i == m.cursor {
