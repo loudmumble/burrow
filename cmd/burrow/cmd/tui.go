@@ -192,9 +192,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.sessVP.Width = msg.Width
-		m.sessVP.Height = max(msg.Height-16, 5)
+		m.sessVP.Height = max(msg.Height-18, 5)
 		m.detailVP.Width = msg.Width
-		m.detailVP.Height = max(msg.Height-20, 5)
+		m.detailVP.Height = max(msg.Height-22, 5)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -1082,7 +1082,7 @@ func (m tuiModel) View() string {
 	}
 
 	// Status bar at bottom
-	b.WriteString(m.renderStatusBar())
+	b.WriteString("\n" + m.renderStatusBar())
 
 	return b.String()
 }
@@ -1121,7 +1121,6 @@ func (m tuiModel) renderStatusBar() string {
 	uptime := time.Since(m.startTime)
 	uptimeStr := fmt.Sprintf("%02d:%02d:%02d", int(uptime.Hours()), int(uptime.Minutes())%60, int(uptime.Seconds())%60)
 
-	agentCount := 0
 	activeCount := 0
 	var totalIn, totalOut int64
 	socksCount := 0
@@ -1129,7 +1128,6 @@ func (m tuiModel) renderStatusBar() string {
 	tunCount := 0
 
 	for _, s := range m.sessions {
-		agentCount++
 		if s.Active {
 			activeCount++
 		}
@@ -1144,33 +1142,35 @@ func (m tuiModel) renderStatusBar() string {
 		}
 	}
 
-	parts := []string{
-		stAccent.Render("burrow"),
-		stDim.Render(uptimeStr),
-		fmt.Sprintf("%d agents", activeCount),
-		fmt.Sprintf("TUN: %s", func() string {
-			if tunCount > 0 {
-				return stGreen.Render("active")
-			}
-			return stDim.Render("--")
-		}()),
-		fmt.Sprintf("SOCKS: %s", func() string {
-			if socksCount > 0 {
-				return stGreen.Render(socksAddr)
-			}
-			return stDim.Render("--")
-		}()),
-		stGreen.Render("▲"+tuiFormatBytes(totalOut)) + " " + stCyan.Render("▼"+tuiFormatBytes(totalIn)),
-	}
+	sep := stDim.Render(" │ ")
 
+	// Line 1: identity + uptime — right edge is the pipe after the timer
+	line1 := "  " + stAccent.Render("burrow") + sep + stDim.Render(uptimeStr) + stDim.Render(" │")
+
+	// Line 2: agent stats, tunnel/socks status, bandwidth
+	tunStr := stDim.Render("--")
+	if tunCount > 0 {
+		tunStr = stGreen.Render("active")
+	}
+	socksStr := stDim.Render("--")
+	if socksCount > 0 {
+		socksStr = stGreen.Render(socksAddr)
+	}
 	spinStr := ""
 	if m.spinning {
-		spinStr = " " + m.spinner.View() + " "
+		spinStr = " " + m.spinner.View()
 	}
 
-	bar := "  " + strings.Join(parts, stDim.Render(" │ ")) + spinStr
-	pad := max(0, m.width-lipgloss.Width(bar))
-	return stStatusBar.Width(m.width).Render(bar + strings.Repeat(" ", pad))
+	line2 := "  " + strings.Join([]string{
+		fmt.Sprintf("%d agents", activeCount),
+		fmt.Sprintf("TUN: %s", tunStr),
+		fmt.Sprintf("SOCKS: %s", socksStr),
+		stGreen.Render("▲"+tuiFormatBytes(totalOut)) + " " + stCyan.Render("▼"+tuiFormatBytes(totalIn)),
+	}, sep) + spinStr
+
+	// Content width only — no terminal-width padding
+	w := max(lipgloss.Width(line1), lipgloss.Width(line2))
+	return stStatusBar.Width(w).Render(line1) + "\n" + stStatusBar.Width(w).Render(line2)
 }
 
 // ── Session List View ───────────────────────────────────────────────────────
