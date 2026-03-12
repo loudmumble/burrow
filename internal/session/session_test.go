@@ -336,3 +336,170 @@ func TestServerOnConnection(t *testing.T) {
 
 	srv.Stop()
 }
+
+func TestFindByHostname(t *testing.T) {
+	m := NewManager()
+	m.Add(&Info{ID: "s1", Hostname: "web-server", Active: true, CreatedAt: time.Now()})
+	m.Add(&Info{ID: "s2", Hostname: "db-server", Active: true, CreatedAt: time.Now()})
+
+	id, found := m.FindByHostname("web-server")
+	if !found {
+		t.Fatal("FindByHostname returned false for existing hostname")
+	}
+	if id != "s1" {
+		t.Errorf("FindByHostname = %q, want %q", id, "s1")
+	}
+
+	_, found = m.FindByHostname("nonexistent")
+	if found {
+		t.Error("FindByHostname returned true for nonexistent hostname")
+	}
+}
+
+func TestWasTunActive(t *testing.T) {
+	m := NewManager()
+	// Initially no TUN was active.
+	if m.WasTunActive("any-host") {
+		t.Error("WasTunActive should be false initially")
+	}
+}
+
+func TestClearTunPrev(t *testing.T) {
+	m := NewManager()
+	// Manually set prev state to test clearing.
+	m.mu.Lock()
+	m.tunPrevHostname = "test-host"
+	m.tunPrevRoutes = []string{"10.0.0.0/24"}
+	m.mu.Unlock()
+
+	if !m.WasTunActive("test-host") {
+		t.Error("WasTunActive should be true after setting tunPrevHostname")
+	}
+
+	m.ClearTunPrev()
+	if m.WasTunActive("test-host") {
+		t.Error("WasTunActive should be false after ClearTunPrev")
+	}
+}
+
+func TestTunPrevRoutes(t *testing.T) {
+	m := NewManager()
+	m.mu.Lock()
+	m.tunPrevRoutes = []string{"10.0.0.0/24", "172.16.0.0/16"}
+	m.mu.Unlock()
+
+	routes := m.TunPrevRoutes()
+	if len(routes) != 2 {
+		t.Fatalf("TunPrevRoutes len = %d, want 2", len(routes))
+	}
+	if routes[0] != "10.0.0.0/24" {
+		t.Errorf("routes[0] = %q, want %q", routes[0], "10.0.0.0/24")
+	}
+}
+
+func TestAddTunnelValidSession(t *testing.T) {
+	m := NewManager()
+	m.Add(&Info{ID: "s1", Hostname: "h1", Active: true, CreatedAt: time.Now()})
+
+	tunnel, err := m.AddTunnel("s1", "local", "127.0.0.1:8080", "10.0.0.1:80", "tcp")
+	if err != nil {
+		t.Fatalf("AddTunnel error: %v", err)
+	}
+	if tunnel.Direction != "local" {
+		t.Errorf("Direction = %q, want %q", tunnel.Direction, "local")
+	}
+	if tunnel.ListenAddr != "127.0.0.1:8080" {
+		t.Errorf("ListenAddr = %q, want %q", tunnel.ListenAddr, "127.0.0.1:8080")
+	}
+	if tunnel.ID == "" {
+		t.Error("tunnel ID should not be empty")
+	}
+
+	// Verify tunnel is tracked.
+	tunnels := m.GetTunnels("s1")
+	if len(tunnels) != 1 {
+		t.Fatalf("GetTunnels len = %d, want 1", len(tunnels))
+	}
+}
+
+func TestRemoveTunnelValidSession(t *testing.T) {
+	m := NewManager()
+	m.Add(&Info{ID: "s1", Hostname: "h1", Active: true, CreatedAt: time.Now()})
+
+	tunnel, _ := m.AddTunnel("s1", "local", "127.0.0.1:8080", "10.0.0.1:80", "tcp")
+	err := m.RemoveTunnel("s1", tunnel.ID)
+	if err != nil {
+		t.Fatalf("RemoveTunnel error: %v", err)
+	}
+
+	tunnels := m.GetTunnels("s1")
+	if len(tunnels) != 0 {
+		t.Errorf("GetTunnels len = %d, want 0 after remove", len(tunnels))
+	}
+}
+
+func TestAddRouteValidSession(t *testing.T) {
+	m := NewManager()
+	m.Add(&Info{ID: "s1", Hostname: "h1", Active: true, CreatedAt: time.Now()})
+
+	route, err := m.AddRoute("s1", "10.0.0.0/24")
+	if err != nil {
+		t.Fatalf("AddRoute error: %v", err)
+	}
+	if route.CIDR != "10.0.0.0/24" {
+		t.Errorf("CIDR = %q, want %q", route.CIDR, "10.0.0.0/24")
+	}
+	if !route.Active {
+		t.Error("route should be active")
+	}
+
+	routes := m.GetRoutes("s1")
+	if len(routes) != 1 {
+		t.Fatalf("GetRoutes len = %d, want 1", len(routes))
+	}
+}
+
+func TestRemoveRouteValidSession(t *testing.T) {
+	m := NewManager()
+	m.Add(&Info{ID: "s1", Hostname: "h1", Active: true, CreatedAt: time.Now()})
+
+	m.AddRoute("s1", "10.0.0.0/24")
+	err := m.RemoveRoute("s1", "10.0.0.0/24")
+	if err != nil {
+		t.Fatalf("RemoveRoute error: %v", err)
+	}
+
+	routes := m.GetRoutes("s1")
+	if len(routes) != 0 {
+		t.Errorf("GetRoutes len = %d, want 0 after remove", len(routes))
+	}
+}
+
+func TestManagerCount(t *testing.T) {
+	m := NewManager()
+	if m.Count() != 0 {
+		t.Errorf("Count = %d, want 0", m.Count())
+	}
+	m.Add(&Info{ID: "s1", Active: true, CreatedAt: time.Now()})
+	m.Add(&Info{ID: "s2", Active: true, CreatedAt: time.Now()})
+	if m.Count() != 2 {
+		t.Errorf("Count = %d, want 2", m.Count())
+	}
+}
+
+func TestAddTunnelInvalidAddresses(t *testing.T) {
+	m := NewManager()
+	m.Add(&Info{ID: "s1", Hostname: "h1", Active: true, CreatedAt: time.Now()})
+
+	// Invalid listen address (no port).
+	_, err := m.AddTunnel("s1", "local", "127.0.0.1", "10.0.0.1:80", "tcp")
+	if err == nil {
+		t.Error("AddTunnel with invalid listen address should return error")
+	}
+
+	// Invalid remote address (no port).
+	_, err = m.AddTunnel("s1", "local", "127.0.0.1:8080", "10.0.0.1", "tcp")
+	if err == nil {
+		t.Error("AddTunnel with invalid remote address should return error")
+	}
+}

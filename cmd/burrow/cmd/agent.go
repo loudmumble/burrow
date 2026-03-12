@@ -495,6 +495,11 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 				}
 				fmt.Printf("[*] Exec request: %s\n", req.Command)
 				go func(id, command string) {
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Fprintf(os.Stderr, "[!] Panic in exec handler: %v\n", r)
+						}
+					}()
 					resp := &protocol.ExecResponsePayload{ID: id}
 					var cmd *exec.Cmd
 					if runtime.GOOS == "windows" {
@@ -525,6 +530,11 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 				}
 				fmt.Printf("[*] File download request: %s\n", req.FilePath)
 				go func(id, filePath string) {
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Fprintf(os.Stderr, "[!] Panic in file download handler: %v\n", r)
+						}
+					}()
 					resp := &protocol.FileDownloadResponsePayload{ID: id}
 					data, readErr := os.ReadFile(filePath)
 					if readErr != nil {
@@ -552,6 +562,11 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 				}
 				fmt.Printf("[*] File upload request: %s\n", req.FilePath)
 				go func(id, filePath string, data []byte) {
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Fprintf(os.Stderr, "[!] Panic in file upload handler: %v\n", r)
+						}
+					}()
 					resp := &protocol.FileUploadResponsePayload{ID: id}
 					writeErr := os.WriteFile(filePath, data, 0644)
 					if writeErr != nil {
@@ -675,6 +690,11 @@ func tunAgentRelay(ctx context.Context, stream net.Conn, ns *netstack.Stack) {
 }
 
 func remoteTunnelAcceptLoop(ctx context.Context, ln net.Listener, sess *mux.Session, remoteAddr string) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "[!] Panic in remote tunnel accept loop: %v\n", r)
+		}
+	}()
 	go func() {
 		<-ctx.Done()
 		ln.Close()
@@ -733,6 +753,11 @@ func remoteTunnelRelay(conn net.Conn, sess *mux.Session, remoteAddr string) {
 // routing. Each stream carries a [2-byte addr len][addr] header followed by
 // bidirectional TCP relay to the target.
 func acceptProxyStreams(ctx context.Context, sess *mux.Session) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "[!] Panic in proxy stream acceptor: %v\n", r)
+		}
+	}()
 	for {
 		stream, err := sess.Accept()
 		if err != nil {

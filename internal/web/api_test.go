@@ -536,3 +536,245 @@ func TestStaticFiles(t *testing.T) {
 		t.Fatalf("expected 200 for style.css, got %d", resp3.StatusCode)
 	}
 }
+
+func TestAuthMiddlewareNoToken(t *testing.T) {
+	mp := newMockProvider()
+	eb := NewEventBus()
+	ts := newTestServer(mp, eb)
+	defer ts.Close()
+
+	// Create a client that does NOT inject the auth header.
+	noAuthClient := &http.Client{}
+
+	resp, err := noAuthClient.Get(ts.URL + "/api/sessions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 with no token, got %d", resp.StatusCode)
+	}
+
+	var body map[string]string
+	json.NewDecoder(resp.Body).Decode(&body)
+	if body["error"] == "" {
+		t.Error("expected error message in response body")
+	}
+}
+
+func TestAuthMiddlewareWrongToken(t *testing.T) {
+	mp := newMockProvider()
+	eb := NewEventBus()
+	ts := newTestServer(mp, eb)
+	defer ts.Close()
+
+	noAuthClient := &http.Client{}
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/sessions", nil)
+	req.Header.Set("Authorization", "Bearer wrong-token")
+
+	resp, err := noAuthClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 with wrong token, got %d", resp.StatusCode)
+	}
+}
+
+func TestAuthMiddlewareQueryParam(t *testing.T) {
+	mp := newMockProvider()
+	eb := NewEventBus()
+	ts := newTestServer(mp, eb)
+	defer ts.Close()
+
+	// Use query param token instead of header.
+	noAuthClient := &http.Client{}
+	resp, err := noAuthClient.Get(ts.URL + "/api/sessions?token=test-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 with query param token, got %d", resp.StatusCode)
+	}
+}
+
+func TestExecEndpoint(t *testing.T) {
+	mp := newMockProvider()
+	eb := NewEventBus()
+	ts := newTestServer(mp, eb)
+	defer ts.Close()
+
+	body := `{"command":"whoami"}`
+	resp, err := http.Post(ts.URL+"/api/sessions/abc/exec", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var result map[string]string
+	json.NewDecoder(resp.Body).Decode(&result)
+	if result["output"] != "mock exec output" {
+		t.Errorf("expected 'mock exec output', got %q", result["output"])
+	}
+}
+
+func TestExecEndpointEmptyCommand(t *testing.T) {
+	mp := newMockProvider()
+	eb := NewEventBus()
+	ts := newTestServer(mp, eb)
+	defer ts.Close()
+
+	body := `{"command":""}`
+	resp, err := http.Post(ts.URL+"/api/sessions/abc/exec", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for empty command, got %d", resp.StatusCode)
+	}
+}
+
+func TestDownloadEndpoint(t *testing.T) {
+	mp := newMockProvider()
+	eb := NewEventBus()
+	ts := newTestServer(mp, eb)
+	defer ts.Close()
+
+	body := `{"file_path":"/etc/passwd"}`
+	resp, err := http.Post(ts.URL+"/api/sessions/abc/download", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	if result["file_name"] != "test.txt" {
+		t.Errorf("expected file_name 'test.txt', got %v", result["file_name"])
+	}
+}
+
+func TestDownloadEndpointEmptyPath(t *testing.T) {
+	mp := newMockProvider()
+	eb := NewEventBus()
+	ts := newTestServer(mp, eb)
+	defer ts.Close()
+
+	body := `{"file_path":""}`
+	resp, err := http.Post(ts.URL+"/api/sessions/abc/download", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for empty file_path, got %d", resp.StatusCode)
+	}
+}
+
+func TestUploadEndpoint(t *testing.T) {
+	mp := newMockProvider()
+	eb := NewEventBus()
+	ts := newTestServer(mp, eb)
+	defer ts.Close()
+
+	body := `{"file_path":"/tmp/test.txt","data":"aGVsbG8="}`
+	resp, err := http.Post(ts.URL+"/api/sessions/abc/upload", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestUploadEndpointMissingData(t *testing.T) {
+	mp := newMockProvider()
+	eb := NewEventBus()
+	ts := newTestServer(mp, eb)
+	defer ts.Close()
+
+	body := `{"file_path":"/tmp/test.txt","data":""}`
+	resp, err := http.Post(ts.URL+"/api/sessions/abc/upload", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for empty data, got %d", resp.StatusCode)
+	}
+}
+
+func TestStopStartTunnel(t *testing.T) {
+	mp := newMockProvider()
+	eb := NewEventBus()
+	ts := newTestServer(mp, eb)
+	defer ts.Close()
+
+	// Stop tunnel
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/sessions/abc/tunnels/t1/stop", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for stop, got %d", resp.StatusCode)
+	}
+
+	// Start tunnel
+	req2, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/sessions/abc/tunnels/t1/start", nil)
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for start, got %d", resp2.StatusCode)
+	}
+}
+
+func TestTunStartStop(t *testing.T) {
+	mp := newMockProvider()
+	eb := NewEventBus()
+	ts := newTestServer(mp, eb)
+	defer ts.Close()
+
+	// Start TUN
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/sessions/abc/tun", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for TUN start, got %d", resp.StatusCode)
+	}
+
+	// Stop TUN
+	req2, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/sessions/abc/tun", nil)
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for TUN stop, got %d", resp2.StatusCode)
+	}
+}

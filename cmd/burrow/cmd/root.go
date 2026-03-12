@@ -9,6 +9,13 @@ import (
 
 var version = "3.0.0"
 
+// Build info variables — set via ldflags at build time:
+//   go build -ldflags "-X cmd.commit=abc123 -X cmd.buildDate=2025-01-01"
+var (
+	commit    = "dev"
+	buildDate = "unknown"
+)
+
 var rootCmd = &cobra.Command{
 	Use:   "burrow",
 	Short: "Network pivoting and tunneling tool",
@@ -26,6 +33,10 @@ Part of the Agent-HQ Attack Suite. Provides:
   - Socat-style relay for arbitrary endpoint bridging
   - WebUI dashboard for session management`,
 	Version: version,
+}
+
+func init() {
+	rootCmd.SetVersionTemplate(fmt.Sprintf("Burrow v%s (commit: %s, built: %s)\n", version, commit, buildDate))
 }
 
 func Execute() {

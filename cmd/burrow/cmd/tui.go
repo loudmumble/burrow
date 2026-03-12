@@ -70,6 +70,7 @@ const (
 	tuiViewExec
 	tuiViewDownload
 	tuiViewUpload
+	tuiViewHelp
 )
 
 type tuiDetailTab int
@@ -353,6 +354,8 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleDownloadKey(msg)
 	case tuiViewUpload:
 		return m.handleUploadKey(msg)
+	case tuiViewHelp:
+		return m.handleHelpKey(msg)
 	}
 	return m, nil
 }
@@ -393,6 +396,14 @@ func (m tuiModel) handleSessionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.spinning = true
 			return m, m.doToggleTUN(s.ID, false)
 		}
+	case "G", "end":
+		if len(m.sessions) > 0 {
+			m.cursor = len(m.sessions) - 1
+		}
+	case "g", "home":
+		m.cursor = 0
+	case "?":
+		m.view = tuiViewHelp
 	case "ctrl+r":
 		m.statusMsg = "Refreshing..."
 		m.refreshData()
@@ -428,6 +439,15 @@ func (m tuiModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor < maxIdx {
 			m.cursor++
 		}
+	case "G", "end":
+		maxIdx := m.detailLen() - 1
+		if maxIdx >= 0 {
+			m.cursor = maxIdx
+		}
+	case "g", "home":
+		m.cursor = 0
+	case "?":
+		m.view = tuiViewHelp
 	case "t":
 		m.view = tuiViewAddTunnel
 		m.inputFields = []string{"Direction", "Listen Address", "Remote Address", "Protocol"}
@@ -1057,6 +1077,8 @@ func (m tuiModel) View() string {
 		m.viewDownloadForm(&b)
 	case tuiViewUpload:
 		m.viewUploadForm(&b)
+	case tuiViewHelp:
+		m.viewHelpOverlay(&b)
 	}
 
 	// Status bar at bottom
@@ -1204,7 +1226,8 @@ func (m tuiModel) viewSessions(b *strings.Builder) {
 				tuiTruncate(s.ID, 8),
 				tuiTruncate(s.Hostname, 10),
 				ips)
-			line := cols + "  " + flags + " " + healthDot + "  " + bwOut + "  " + bwIn + "  " + fmt.Sprintf("%-6s", uptime)
+			bwBar := renderBwBar(m.rates[s.ID])
+			line := cols + "  " + flags + " " + healthDot + "  " + bwOut + "  " + bwIn + "  " + bwBar + " " + fmt.Sprintf("%-6s", uptime)
 
 			if i == m.cursor {
 				highlighted := stSelRow.Width(m.width).Render("▸ " + line[2:])
@@ -1225,7 +1248,7 @@ func (m tuiModel) viewSessions(b *strings.Builder) {
 
 	b.WriteString("\n")
 	b.WriteString(renderHelpBar([]string{
-		"↑/k up", "↓/j down", "enter select", "^T toggle TUN", "^R refresh", "q quit",
+		"↑/k up", "↓/j down", "g/G top/end", "enter select", "^T TUN", "^R refresh", "? help", "q quit",
 	}))
 }
 
@@ -1307,7 +1330,7 @@ func (m tuiModel) viewDetail(b *strings.Builder) {
 	m.renderLogPanel(b)
 
 	b.WriteString("\n")
-	b.WriteString(renderHelpBar([]string{"\u2191/k up", "\u2193/j down", "esc back", "^T TUN", "s SOCKS5", "^R refresh"}) + "\n")
+	b.WriteString(renderHelpBar([]string{"↑/k up", "↓/j down", "g/G top/end", "esc back", "^T TUN", "s SOCKS5", "^R refresh", "? help"}) + "\n")
 	b.WriteString(renderHelpBar([]string{"t tunnel", "r route", "u start", "n stop", "d delete", "x exec", "w download", "p upload"}))
 }
 
@@ -1545,6 +1568,70 @@ func renderBwBar(rate *rateSnapshot) string {
 		}
 	}
 	return bar
+}
+
+// ── Help Overlay ─────────────────────────────────────────────────────────
+
+func (m tuiModel) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "?", "esc", "q", "enter":
+		// Return to previous view — sessions or detail
+		if m.selected != "" {
+			m.view = tuiViewSessionDetail
+		} else {
+			m.view = tuiViewSessions
+		}
+	}
+	return m, nil
+}
+
+func (m tuiModel) viewHelpOverlay(b *strings.Builder) {
+	m.renderCompactBanner(b)
+	b.WriteString("\n")
+	b.WriteString(stAccent.Bold(true).Render("  Keyboard Shortcuts") + "\n")
+	b.WriteString(renderSep(m.width) + "\n\n")
+
+	sections := []struct {
+		title string
+		keys  [][2]string
+	}{
+		{"Navigation", [][2]string{
+			{"↑/k", "Move up"},
+			{"↓/j", "Move down"},
+			{"g/Home", "Jump to top"},
+			{"G/End", "Jump to bottom"},
+			{"enter", "Select / confirm"},
+			{"esc/q", "Back / quit"},
+			{"tab", "Switch tab"},
+		}},
+		{"Session Actions", [][2]string{
+			{"^T", "Toggle TUN interface"},
+			{"s", "Toggle SOCKS5 proxy"},
+			{"^R", "Refresh data"},
+		}},
+		{"Detail Actions", [][2]string{
+			{"t", "Add tunnel"},
+			{"r", "Add route"},
+			{"u", "Start stopped tunnel"},
+			{"n", "Stop active tunnel"},
+			{"d", "Delete tunnel/route"},
+			{"x", "Execute command"},
+			{"w", "Download file"},
+			{"p", "Upload file"},
+		}},
+	}
+
+	for _, sec := range sections {
+		b.WriteString(stBold.Render("  "+sec.title) + "\n")
+		for _, kv := range sec.keys {
+			b.WriteString(fmt.Sprintf("    %s  %s\n",
+				stCyan.Render(fmt.Sprintf("%-8s", kv[0])),
+				stDim.Render(kv[1])))
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString(renderHelpBar([]string{"? close", "esc close"}))
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

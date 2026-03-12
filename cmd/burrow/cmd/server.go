@@ -306,6 +306,11 @@ func runServer(cmd *cobra.Command, _ []string) {
 
 func handleAgentConn(conn net.Conn, mgr *session.Manager) {
 	defer conn.Close()
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(serverErrLog, "[!] Panic in agent handler for %s: %v\n", conn.RemoteAddr(), r)
+		}
+	}()
 
 	fmt.Fprintf(serverLog, "[*] New agent connection from %s\n", conn.RemoteAddr())
 
@@ -507,6 +512,11 @@ func newSessionID() string {
 }
 
 func acceptDataStreams(sess *mux.Session, mgr *session.Manager, sessionID string) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(serverErrLog, "[!] Panic in data stream acceptor for %s: %v\n", sessionID, r)
+		}
+	}()
 	for {
 		stream, err := sess.Accept()
 		if err != nil {
@@ -534,7 +544,11 @@ func acceptDataStreams(sess *mux.Session, mgr *session.Manager, sessionID string
 
 func handleRemoteTunnelStream(stream net.Conn) {
 	defer stream.Close()
-
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(serverErrLog, "[!] Panic in remote tunnel stream: %v\n", r)
+		}
+	}()
 	// Read address header: [2-byte addr len BE] [addr bytes]
 	lenBuf := make([]byte, 2)
 	if _, err := io.ReadFull(stream, lenBuf); err != nil {

@@ -74,12 +74,14 @@ var sessionListCmd = &cobra.Command{
 
 Example:
   burrow session list
+  burrow session list --json
   burrow session list --webui 0.0.0.0:9090
   burrow session list --token <api-token>`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		webuiAddr, _ := cmd.Flags().GetString("webui")
 		token, _ := cmd.Flags().GetString("token")
 		noTLS, _ := cmd.Flags().GetBool("no-tls")
+		jsonOutput, _ := cmd.Flags().GetBool("json")
 
 		client := sessionHTTPClient(!noTLS)
 		baseURL := sessionBaseURL(webuiAddr, noTLS)
@@ -108,6 +110,12 @@ Example:
 		if err := json.NewDecoder(resp.Body).Decode(&sessions); err != nil {
 			fmt.Fprintf(os.Stderr, "[!] Failed to parse response: %v\n", err)
 			os.Exit(1)
+		}
+		if jsonOutput {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			enc.Encode(sessions)
+			return
 		}
 
 		if len(sessions) == 0 {
@@ -287,6 +295,7 @@ func init() {
 	sessionCmd.PersistentFlags().String("webui", "0.0.0.0:9090", "WebUI server address")
 	sessionCmd.PersistentFlags().String("token", "", "API authentication token")
 	sessionCmd.PersistentFlags().Bool("no-tls", false, "Use plain HTTP instead of HTTPS")
+	sessionListCmd.Flags().Bool("json", false, "Output session list as JSON")
 }
 
 func printSessionTunnels(client *http.Client, baseURL, sessionID, token string) {
