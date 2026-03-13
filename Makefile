@@ -1,4 +1,4 @@
-.PHONY: build build-local build-stager build-tools build-stager-evasion build-stager-packed build-all test clean tidy sizes
+.PHONY: build build-local build-stager build-anvil build-stager-evasion build-stager-packed build-all test clean tidy sizes
 
 GO        ?= go
 MODULE    := github.com/loudmumble/burrow/cmd/burrow/cmd
@@ -7,6 +7,8 @@ STAGER    := stager
 BUILD_DIR := build
 VERSION   ?= $(shell git describe --tags --always 2>/dev/null || echo "3.0.0")
 LDFLAGS   := -s -w -X $(MODULE).version=$(VERSION)
+ANVIL_DIR := ../anvil
+ANVIL     := $(ANVIL_DIR)/build/anvil
 
 PLATFORMS := linux/amd64 linux/arm64 windows/amd64 darwin/amd64 darwin/arm64
 
@@ -52,17 +54,20 @@ build-stager:
 		-ldflags="-s -w" -o $(BUILD_DIR)/$(STAGER)-windows-amd64.exe ./cmd/stager/
 	@echo "Stager built (linux-amd64 + windows-amd64)."
 
-# Build obfuscation tools
-build-tools:
-	@mkdir -p tools/bin
-	$(GO) build -o tools/bin/strobf ./tools/strobf/
-	$(GO) build -o tools/bin/packer ./tools/packer/
+# Build anvil toolkit (external dependency)
+build-anvil:
+	@if [ ! -f $(ANVIL) ]; then \
+		echo "Building anvil toolkit..."; \
+		$(MAKE) -C $(ANVIL_DIR) build; \
+	else \
+		echo "anvil: $(ANVIL) (cached)"; \
+	fi
 
 # Evasion stager: obfuscated strings + hardened build
-build-stager-evasion: build-tools
+build-stager-evasion: build-anvil
 	@echo "=== Evasion stager ==="
 	@rm -rf cmd/stager/_build
-	tools/bin/strobf -input cmd/stager/main.go -outdir cmd/stager/_build
+	$(ANVIL) obfuscate go -input cmd/stager/main.go -outdir cmd/stager/_build
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags="-s -w" -o $(BUILD_DIR)/$(STAGER)-evasion-linux-amd64 ./cmd/stager/_build/
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build -trimpath -ldflags="-s -w" -o $(BUILD_DIR)/$(STAGER)-evasion-windows-amd64.exe ./cmd/stager/_build/
 	@rm -rf cmd/stager/_build
@@ -70,8 +75,8 @@ build-stager-evasion: build-tools
 # Packed stager: evasion + custom compression
 build-stager-packed: build-stager-evasion
 	@echo "=== Packed stager ==="
-	tools/bin/packer -input $(BUILD_DIR)/$(STAGER)-evasion-linux-amd64 -output $(BUILD_DIR)/$(STAGER)-packed-linux-amd64 -goos linux -goarch amd64
-	tools/bin/packer -input $(BUILD_DIR)/$(STAGER)-evasion-windows-amd64.exe -output $(BUILD_DIR)/$(STAGER)-packed-windows-amd64.exe -goos windows -goarch amd64
+	$(ANVIL) pack -input $(BUILD_DIR)/$(STAGER)-evasion-linux-amd64 -output $(BUILD_DIR)/$(STAGER)-packed-linux-amd64 -goos linux -goarch amd64
+	$(ANVIL) pack -input $(BUILD_DIR)/$(STAGER)-evasion-windows-amd64.exe -output $(BUILD_DIR)/$(STAGER)-packed-windows-amd64.exe -goos windows -goarch amd64
 
 # Build everything: full burrow + stager + evasion + packed
 build-all:

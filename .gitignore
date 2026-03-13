@@ -17,3 +17,4 @@ node_modules/
 /burrow
 tools/bin/
 cmd/stager/_build/
+.anvil/
