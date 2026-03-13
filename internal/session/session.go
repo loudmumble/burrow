@@ -33,6 +33,8 @@ type Info struct {
 	Remote    string    `json:"remote"`
 	CreatedAt time.Time `json:"created_at"`
 	Active    bool      `json:"active"`
+	Transport string    `json:"transport"`
+	Version   string    `json:"version"`
 }
 
 // AgentConn holds the mux session and control stream for a connected agent.
@@ -54,26 +56,53 @@ type AgentConn struct {
 
 	socksServer *proxy.SOCKS5
 	socksCancel context.CancelFunc
-	execResults map[string]chan *protocol.ExecResponsePayload
+	execResults     map[string]chan *protocol.ExecResponsePayload
 	downloadResults map[string]chan *protocol.FileDownloadResponsePayload
 	uploadResults   map[string]chan *protocol.FileUploadResponsePayload
+
+	lastPingSent atomic.Value // time.Time
+	rtt          atomic.Int64 // microseconds
 }
 
 // Manager tracks all active agent sessions.
 type Manager struct {
 	sessions   map[string]*AgentConn
 	mu         sync.RWMutex
+	events     *web.EventBus
 	tunIface   *tun.Interface
 	tunSession string           // which session owns TUN
 	tunCancel  context.CancelFunc
 	tunPrevHostname string
 	tunPrevRoutes   []string
+	labels     map[string]string // session ID -> user label
 }
 
 // NewManager creates a new session manager.
 func NewManager() *Manager {
 	return &Manager{
 		sessions: make(map[string]*AgentConn),
+		labels:   make(map[string]string),
+	}
+}
+
+// SetEventBus attaches an EventBus to the manager for real-time event publishing.
+func (m *Manager) SetEventBus(eb *web.EventBus) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.events = eb
+}
+
+// GetEventBus returns the EventBus attached to this manager, or nil.
+func (m *Manager) GetEventBus() *web.EventBus {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.events
+}
+
+// publishEvent publishes an event if an EventBus is attached.
+func (m *Manager) publishEvent(evtType web.EventType, data interface{}) {
+	if m.events != nil {
+		m.events.Publish(web.Event{Type: evtType, Data: data})
 	}
 }
 
@@ -135,6 +164,7 @@ func (m *Manager) AddConn(info *Info, muxSess *mux.Session, ctrl net.Conn) {
 		downloadResults: make(map[string]chan *protocol.FileDownloadResponsePayload),
 		uploadResults:   make(map[string]chan *protocol.FileUploadResponsePayload),
 	}
+	m.publishEvent(web.EventSessionConnect, map[string]string{"id": info.ID, "hostname": info.Hostname})
 }
 
 // Remove deletes a session by ID. If TUN is active on this session, it is stopped first.
@@ -198,6 +228,7 @@ func (m *Manager) Remove(id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.sessions, id)
+	m.publishEvent(web.EventSessionDisconnect, map[string]string{"id": id})
 }
 
 // WasTunActive returns whether TUN was active for the given hostname
@@ -293,23 +324,7 @@ func (m *Manager) ListSessions() []web.SessionInfo {
 	defer m.mu.RUnlock()
 	result := make([]web.SessionInfo, 0, len(m.sessions))
 	for _, ac := range m.sessions {
-		s := ac.Info
-		socksAddr := ""
-		if ac.socksServer != nil {
-			socksAddr = ac.socksServer.Addr()
-		}
-		result = append(result, web.SessionInfo{
-			ID:        s.ID,
-			Hostname:  s.Hostname,
-			OS:        s.OS,
-			IPs:       s.IPs,
-			Active:    s.Active,
-			CreatedAt: s.CreatedAt.Format(time.RFC3339),
-			TunActive: m.tunSession == s.ID && m.tunIface != nil,
-			BytesIn:   ac.bytesIn.Load(),
-			BytesOut:  ac.bytesOut.Load(),
-			SocksAddr: socksAddr,
-		})
+		result = append(result, m.buildSessionInfo(ac))
 	}
 	return result
 }
@@ -322,23 +337,120 @@ func (m *Manager) GetSession(id string) (web.SessionInfo, bool) {
 	if !ok {
 		return web.SessionInfo{}, false
 	}
+	return m.buildSessionInfo(ac), true
+}
+
+// buildSessionInfo creates a SessionInfo from an AgentConn. Caller must hold m.mu.RLock.
+func (m *Manager) buildSessionInfo(ac *AgentConn) web.SessionInfo {
 	s := ac.Info
 	socksAddr := ""
+	var socksActive, socksBytesIn, socksBytesOut int64
 	if ac.socksServer != nil {
 		socksAddr = ac.socksServer.Addr()
+		socksActive, _, socksBytesIn, socksBytesOut = ac.socksServer.Stats()
 	}
+	ac.mu.RLock()
+	tunnelCount := len(ac.tunnels)
+	routeCount := len(ac.routes)
+	ac.mu.RUnlock()
 	return web.SessionInfo{
-		ID:        s.ID,
-		Hostname:  s.Hostname,
-		OS:        s.OS,
-		IPs:       s.IPs,
-		Active:    s.Active,
-		CreatedAt: s.CreatedAt.Format(time.RFC3339),
-		TunActive: m.tunSession == s.ID && m.tunIface != nil,
-		BytesIn:   ac.bytesIn.Load(),
-		BytesOut:  ac.bytesOut.Load(),
-		SocksAddr: socksAddr,
-	}, true
+		ID:            s.ID,
+		Hostname:      s.Hostname,
+		OS:            s.OS,
+		IPs:           s.IPs,
+		Active:        s.Active,
+		CreatedAt:     s.CreatedAt.Format(time.RFC3339),
+		TunActive:     m.tunSession == s.ID && m.tunIface != nil,
+		BytesIn:       ac.bytesIn.Load(),
+		BytesOut:      ac.bytesOut.Load(),
+		SocksAddr:     socksAddr,
+		Transport:     s.Transport,
+		AgentVersion:  s.Version,
+		PID:           s.PID,
+		Tunnels:       tunnelCount,
+		Routes:        routeCount,
+		SocksActive:   socksActive,
+		SocksBytesIn:  socksBytesIn,
+		SocksBytesOut: socksBytesOut,
+		RTTMicros:     ac.rtt.Load(),
+	}
+}
+
+// MarkPingSent records the time a ping was sent to the agent.
+func (m *Manager) MarkPingSent(sessionID string) {
+	ac := m.getConn(sessionID)
+	if ac != nil {
+		ac.lastPingSent.Store(time.Now())
+	}
+}
+
+// MarkPongReceived records a pong response and computes RTT.
+func (m *Manager) MarkPongReceived(sessionID string) {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return
+	}
+	if sent, ok := ac.lastPingSent.Load().(time.Time); ok && !sent.IsZero() {
+		ac.rtt.Store(time.Since(sent).Microseconds())
+	}
+}
+
+// SetLabel sets a user-defined label for a session.
+func (m *Manager) SetLabel(sessionID, label string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if label == "" {
+		delete(m.labels, sessionID)
+	} else {
+		m.labels[sessionID] = label
+	}
+}
+
+// GetLabel returns the user-defined label for a session.
+func (m *Manager) GetLabel(sessionID string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.labels[sessionID]
+}
+
+// KillSession tears down all tunnels, routes, SOCKS5, and TUN on a session.
+func (m *Manager) KillSession(sessionID string) error {
+	ac := m.getConn(sessionID)
+	if ac == nil {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+	// Stop TUN if this session owns it.
+	m.mu.RLock()
+	ownsTun := m.tunSession == sessionID && m.tunIface != nil
+	m.mu.RUnlock()
+	if ownsTun {
+		_ = m.StopTun(sessionID)
+	}
+	// Stop SOCKS5 if active.
+	if m.IsSOCKS5Active(sessionID) {
+		_ = m.StopSOCKS5(sessionID)
+	}
+	// Remove all tunnels.
+	ac.mu.RLock()
+	tunnelIDs := make([]string, 0, len(ac.tunnels))
+	for tid := range ac.tunnels {
+		tunnelIDs = append(tunnelIDs, tid)
+	}
+	ac.mu.RUnlock()
+	for _, tid := range tunnelIDs {
+		_ = m.RemoveTunnel(sessionID, tid)
+	}
+	// Remove all routes.
+	ac.mu.RLock()
+	routeCIDRs := make([]string, 0, len(ac.routes))
+	for cidr := range ac.routes {
+		routeCIDRs = append(routeCIDRs, cidr)
+	}
+	ac.mu.RUnlock()
+	for _, cidr := range routeCIDRs {
+		_ = m.RemoveRoute(sessionID, cidr)
+	}
+	return nil
 }
 
 // GetTunnels implements web.SessionProvider.

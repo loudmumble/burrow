@@ -222,7 +222,7 @@ func runServer(cmd *cobra.Command, _ []string) {
 				fmt.Fprintf(serverErrLog, "[!] Accept error: %v\n", err)
 				continue
 			}
-			go handleAgentConn(conn, mgr)
+			go handleAgentConn(conn, mgr, transportName)
 		}
 	}()
 
@@ -263,6 +263,7 @@ func runServer(cmd *cobra.Command, _ []string) {
 		}
 
 		events := web.NewEventBus()
+		mgr.SetEventBus(events)
 		webSrv := web.NewServer(webAddr, mgr, events, apiToken, true, tlsCfg, webuiEnabled)
 		go func() {
 			if err := webSrv.Start(ctx); err != nil {
@@ -304,7 +305,7 @@ func runServer(cmd *cobra.Command, _ []string) {
 	}
 }
 
-func handleAgentConn(conn net.Conn, mgr *session.Manager) {
+func handleAgentConn(conn net.Conn, mgr *session.Manager, transportName string) {
 	defer conn.Close()
 	defer func() {
 		if r := recover(); r != nil {
@@ -347,6 +348,8 @@ func handleAgentConn(conn net.Conn, mgr *session.Manager) {
 		CreatedAt: time.Now(),
 		Active:    true,
 	}
+	info.Transport = transportName
+	info.Version = handshake.Version
 	// Evict stale session for same hostname to prevent resource leaks.
 	if existingID, found := mgr.FindByHostname(handshake.Hostname); found {
 		fmt.Fprintf(serverLog, "[*] Evicting stale session %s for reconnecting agent %s\n", existingID, handshake.Hostname)
@@ -431,6 +434,7 @@ func serverCommandLoop(ctrl net.Conn, mgr *session.Manager, sessionID string) er
 		case msg := <-msgCh:
 			switch msg.Type {
 			case protocol.MsgPong:
+				mgr.MarkPongReceived(sessionID)
 			case protocol.MsgTunnelAck:
 				ack, err := protocol.DecodeTunnelAck(msg)
 				if err != nil {
@@ -496,6 +500,7 @@ func serverCommandLoop(ctrl net.Conn, mgr *session.Manager, sessionID string) er
 			}
 
 		case <-ticker.C:
+			mgr.MarkPingSent(sessionID)
 			if err := mgr.WriteCtrl(sessionID, protocol.NewPing()); err != nil {
 				return fmt.Errorf("ping failed: %w", err)
 			}

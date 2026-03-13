@@ -10,18 +10,25 @@ import (
 
 // SessionInfo describes an agent session for the dashboard.
 type SessionInfo struct {
-	ID        string   `json:"id"`
-	Hostname  string   `json:"hostname"`
-	OS        string   `json:"os"`
-	IPs       []string `json:"ips"`
-	Active    bool     `json:"active"`
-	CreatedAt string   `json:"created_at"`
-	Tunnels   int      `json:"tunnel_count"`
-	Routes    int      `json:"route_count"`
-	BytesIn   int64    `json:"bytes_in"`
-	BytesOut  int64    `json:"bytes_out"`
-	TunActive bool     `json:"tun_active"`
-	SocksAddr string   `json:"socks_addr,omitempty"`
+	ID            string   `json:"id"`
+	Hostname      string   `json:"hostname"`
+	OS            string   `json:"os"`
+	IPs           []string `json:"ips"`
+	Active        bool     `json:"active"`
+	CreatedAt     string   `json:"created_at"`
+	Tunnels       int      `json:"tunnel_count"`
+	Routes        int      `json:"route_count"`
+	BytesIn       int64    `json:"bytes_in"`
+	BytesOut      int64    `json:"bytes_out"`
+	TunActive     bool     `json:"tun_active"`
+	SocksAddr     string   `json:"socks_addr,omitempty"`
+	Transport     string   `json:"transport,omitempty"`
+	AgentVersion  string   `json:"agent_version,omitempty"`
+	PID           int      `json:"pid,omitempty"`
+	SocksActive   int64    `json:"socks_active_conns"`
+	SocksBytesIn  int64    `json:"socks_bytes_in"`
+	SocksBytesOut int64    `json:"socks_bytes_out"`
+	RTTMicros     int64    `json:"rtt_us"`
 }
 
 // TunnelInfo describes a tunnel for the dashboard.
@@ -61,6 +68,9 @@ type SessionProvider interface {
 	StartTun(sessionID string) error
 	StopTun(sessionID string) error
 	IsTunActive(sessionID string) bool
+	IsSOCKS5Active(sessionID string) bool
+	SOCKS5Addr(sessionID string) string
+	KillSession(sessionID string) error
 	ExecCommand(sessionID, command string) (string, error)
 	DownloadFile(sessionID, filePath string) (*protocol.FileDownloadResponsePayload, error)
 	UploadFile(sessionID, filePath string, data []byte) (*protocol.FileUploadResponsePayload, error)
