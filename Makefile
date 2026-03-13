@@ -1,4 +1,4 @@
-.PHONY: build build-local build-stager build-anvil build-stager-evasion build-stager-packed build-all test clean tidy sizes
+.PHONY: build build-local build-stager check-anvil build-anvil build-stager-evasion build-stager-packed build-all test clean tidy sizes verify
 
 GO        ?= go
 MODULE    := github.com/loudmumble/burrow/cmd/burrow/cmd
@@ -54,15 +54,27 @@ build-stager:
 		-ldflags="-s -w" -o $(BUILD_DIR)/$(STAGER)-windows-amd64.exe ./cmd/stager/
 	@echo "Stager built (linux-amd64 + windows-amd64)."
 
+# Verify anvil toolkit is available
+check-anvil:
+	@if [ ! -d $(ANVIL_DIR) ]; then \
+		echo "ERROR: anvil directory not found at $(ANVIL_DIR)"; \
+		echo "  Clone anvil next to burrow:"; \
+		echo "    cd .. && git clone ssh://git@gitlab.loudmumble.com:2424/loudmumble/anvil.git"; \
+		exit 1; \
+	fi
+
 # Build anvil toolkit (external dependency)
-build-anvil:
+build-anvil: check-anvil
 	@if [ ! -f $(ANVIL) ]; then \
 		echo "Building anvil toolkit..."; \
-		$(MAKE) -C $(ANVIL_DIR) build; \
+		$(MAKE) -C $(ANVIL_DIR) build || { echo "ERROR: anvil build failed"; exit 1; }; \
 	else \
 		echo "anvil: $(ANVIL) (cached)"; \
 	fi
-
+	@if [ ! -x $(ANVIL) ]; then \
+		echo "ERROR: anvil binary not executable at $(ANVIL)"; \
+		exit 1; \
+	fi
 # Evasion stager: obfuscated strings + hardened build
 build-stager-evasion: build-anvil
 	@echo "=== Evasion stager ==="
@@ -91,16 +103,46 @@ build-all:
 		-ldflags="-s -w" -o $(BUILD_DIR)/$(STAGER)-linux-amd64 ./cmd/stager/
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build \
 		-ldflags="-s -w" -o $(BUILD_DIR)/$(STAGER)-windows-amd64.exe ./cmd/stager/
-	@$(MAKE) --no-print-directory build-stager-packed
+	$(MAKE) --no-print-directory build-stager-packed
 	@echo "=== Done ==="
-	@$(MAKE) --no-print-directory sizes
-
+	$(MAKE) --no-print-directory sizes
+	$(MAKE) --no-print-directory verify
 
 # Print binary sizes
 sizes:
 	@echo ""
 	@echo "Binary sizes:"
 	@ls -lh $(BUILD_DIR)/ 2>/dev/null | grep -v '^total' | grep -v '^d' | awk '{printf "  %-45s %s\n", $$NF, $$5}' || true
+
+# Verify all expected binaries exist
+verify:
+	@echo ""
+	@echo "Verifying binaries..."
+	@fail=0; \
+	for bin in \
+		$(BINARY)-linux-amd64 \
+		$(BINARY)-windows-amd64.exe \
+		$(STAGER)-linux-amd64 \
+		$(STAGER)-windows-amd64.exe \
+		$(STAGER)-evasion-linux-amd64 \
+		$(STAGER)-evasion-windows-amd64.exe \
+		$(STAGER)-packed-linux-amd64 \
+		$(STAGER)-packed-windows-amd64.exe; \
+	do \
+		if [ -f $(BUILD_DIR)/$$bin ]; then \
+			echo "  OK  $$bin"; \
+		else \
+			echo "  FAIL  $$bin  (MISSING)"; \
+			fail=1; \
+		fi; \
+	done; \
+	if [ $$fail -eq 1 ]; then \
+		echo ""; \
+		echo "ERROR: some binaries are missing. Check build output above."; \
+		exit 1; \
+	fi; \
+	echo ""
+	@echo "All 8 binaries verified."
 
 test:
 	$(GO) test ./...
