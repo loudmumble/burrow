@@ -52,7 +52,7 @@ Select transport with `--transport <name>` on both server and agent. Both sides 
 
 Start the proxy server that accepts agent connections.
 
-On startup, the server generates a self-signed Ed25519 TLS certificate and prints its SHA256 fingerprint. Pass this fingerprint to agents with `--fingerprint` so they can verify the server's identity.
+On startup, the server generates a self-signed Ed25519 TLS certificate and prints its SHA256 fingerprint. Pass this fingerprint to agents with `--fp` (or `-f`) so they can verify the server's identity. Short prefixes are supported — the first 8 bytes (as shown in the TUI) are sufficient.
 
 **Flags:**
 
@@ -118,7 +118,7 @@ The agent auto-reconnects on disconnect. Use `--retry` to cap reconnection attem
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--connect, -c` | (required) | Server address to connect to (`host:port`) |
-| `--fingerprint` | | Expected server TLS fingerprint (SHA256). Format: `SHA256:hex...` |
+| `--fp, -f` | | Expected server TLS fingerprint (SHA256). Full or prefix match. |
 | `--retry` | `0` | Max reconnection attempts. `0` means infinite. |
 | `--transport, -t` | `raw` | Transport protocol: `raw`, `ws`, `dns`, `icmp`, `http` |
 | `--no-tls` | | Connect without TLS |
@@ -130,7 +130,7 @@ The agent auto-reconnects on disconnect. Use `--retry` to cap reconnection attem
 burrow agent --connect 10.0.0.1:11601
 
 # With fingerprint verification (recommended)
-burrow agent -c 10.0.0.1:11601 --fingerprint SHA256:a3f2c1...
+burrow agent -c 10.0.0.1:11601 --fp AB:CD:EF:01:23:45:67:89
 
 # WebSocket transport
 burrow agent --connect 10.0.0.1:443 --transport ws
@@ -922,7 +922,7 @@ burrow relay tcp-listen:9001 tcp-connect:127.0.0.1:9000
 sudo burrow server --tui --webui
 
 # Target: run agent
-burrow agent --connect OPERATOR_IP:11601 --fingerprint SHA256:a3f2c1...
+burrow agent --connect OPERATOR_IP:11601 --fp AB:CD:EF:01:23:45:67:89
 
 # In TUI: manage sessions, tunnels, routes, and TUN
 # Or use CLI:
@@ -1004,7 +1004,7 @@ burrow pivot --target final.host --port 443 --hop hop1:22 --hop hop2:443 --local
 burrow server --transport ws --listen 0.0.0.0:443 --mcp-api
 
 # Target: connect back using WebSocket
-burrow agent --connect operator.com:443 --transport ws --fingerprint SHA256:a3f2c1...
+burrow agent --connect operator.com:443 --transport ws --fp AB:CD:EF:01:23:45:67:89
 ```
 
 ### DNS Tunnel Through Restrictive Network
@@ -1072,7 +1072,7 @@ burrow server --webui
 # Note the fingerprint and token
 
 # On hop1 (10.0.0.5): deploy and run agent
-burrow agent --connect OPERATOR_IP:11601 --fingerprint SHA256:a3f2c1...
+burrow agent --connect OPERATOR_IP:11601 --fp AB:CD:EF:01:23:45:67:89
 ```
 
 #### Step 3: Scan internal network through hop1
@@ -1200,7 +1200,7 @@ curl -k -H "Authorization: Bearer <token>" https://127.0.0.1:9090/api/events
 
 ## Security Model
 
-**TLS:** The server auto-generates a self-signed Ed25519 certificate on startup. The SHA256 fingerprint of the certificate DER is printed to stdout. Pass this to agents with `--fingerprint SHA256:...` so they can verify the server's identity without a CA chain.
+**TLS:** The server auto-generates a self-signed Ed25519 certificate on startup. The SHA256 fingerprint of the certificate DER is printed to stdout. Pass it to agents with `--fp AB:CD:...` for verification. Prefix matching is supported — the first 8 bytes are sufficient (shown in TUI banner).
 
 **Frame encryption:** Each frame is encrypted independently using X25519 ECDH key exchange, HKDF-SHA256 key derivation, and ChaCha20-Poly1305 or AES-256-GCM AEAD. A 4-byte counter provides anti-replay protection. Keys rotate hourly.
 

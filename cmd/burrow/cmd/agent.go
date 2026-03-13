@@ -44,7 +44,7 @@ tunnel and route commands. TLS is enabled by default.
 
 Examples:
   burrow agent --connect 10.0.0.1:11601
-  burrow agent -c 10.0.0.1:11601 --fingerprint AB:CD:EF:...
+  burrow agent -c 10.0.0.1:11601 --fp AB:CD:EF:01:23:45:67:89
   burrow agent --connect wss://10.0.0.1:443 --transport ws
   burrow agent --connect 10.0.0.1:5353 --transport dns
   burrow agent --connect 10.0.0.1 --transport icmp
@@ -56,7 +56,9 @@ func init() {
 	rootCmd.AddCommand(agentCmd)
 
 	agentCmd.Flags().StringP("connect", "c", "", "Server address to connect to (required)")
-	agentCmd.Flags().String("fingerprint", "", "Expected server TLS fingerprint for verification")
+	agentCmd.Flags().StringP("fp", "f", "", "Expected server TLS fingerprint for verification")
+	agentCmd.Flags().String("fingerprint", "", "Alias for --fp")
+	agentCmd.Flags().MarkHidden("fingerprint")
 	agentCmd.Flags().Int("max-retries", 0, "Max reconnection attempts (0 = infinite)")
 	agentCmd.Flags().StringP("transport", "t", "raw", "Transport protocol (raw, ws, dns, icmp, http)")
 	agentCmd.Flags().Bool("no-tls", false, "Connect without TLS")
@@ -65,7 +67,11 @@ func init() {
 
 func runAgent(cmd *cobra.Command, _ []string) {
 	serverAddr, _ := cmd.Flags().GetString("connect")
-	fingerprint, _ := cmd.Flags().GetString("fingerprint")
+	fp, _ := cmd.Flags().GetString("fp")
+	if fp == "" {
+		fp, _ = cmd.Flags().GetString("fingerprint")
+	}
+	fingerprint := fp
 	maxRetry, _ := cmd.Flags().GetInt("max-retries")
 	transportName, _ := cmd.Flags().GetString("transport")
 	noTLS, _ := cmd.Flags().GetBool("no-tls")
@@ -158,7 +164,7 @@ func buildClientTLSConfig(fingerprint string) *tls.Config {
 		}
 	}
 
-	expected := fingerprint
+	expected := strings.ToUpper(strings.TrimSpace(fingerprint))
 	return &tls.Config{
 		MinVersion:         tls.VersionTLS12,
 		InsecureSkipVerify: true,
@@ -171,7 +177,7 @@ func buildClientTLSConfig(fingerprint string) *tls.Config {
 				return fmt.Errorf("parse peer certificate: %w", err)
 			}
 			actual := certgen.Fingerprint(cert)
-			if actual != expected {
+			if !strings.HasPrefix(actual, expected) {
 				return fmt.Errorf("%w: expected %s, got %s",
 					certgen.ErrFingerprintMismatch, expected, actual)
 			}

@@ -1106,33 +1106,21 @@ func (m tuiModel) renderBanner(b *strings.Builder) {
 	title := stAccent.Bold(true).Render("  ╔══╗ ╦ ╦ ╦═╗ ╦═╗ ╔══╗ ╦   ╦")
 	title2 := stAccent.Bold(true).Render("  ╠══╣ ║ ║ ╠╦╝ ╠╦╝ ║  ║ ║ ╦ ║")
 	title3 := stAccent.Bold(true).Render("  ╚══╝ ╚═╝ ╩╚═ ╩╚═ ╚══╝ ╚═╝═╝")
+	fpStr := stDim.Render("(no TLS)")
+	if m.serverFingerprint != "" {
+		fpStr = stCyan.Render(tuiShortFingerprint(m.serverFingerprint, 8))
+	}
 	b.WriteString(title + "\n")
 	b.WriteString(title2 + "\n")
-	b.WriteString(title3 + "  " + stDim.Render("v"+version+" │ pentest pivoting") + "\n")
-	// TLS fingerprint — split across 2 lines for readability within 100 cols
-	if m.serverFingerprint == "" {
-		b.WriteString(stDim.Render("  FP: (no TLS)") + "\n")
-	} else {
-		fp := m.serverFingerprint
-		mid := len(fp) / 2
-		for mid < len(fp) && fp[mid] != ':' {
-			mid++
-		}
-		if mid < len(fp) {
-			b.WriteString(stDim.Render("  FP: ") + stCyan.Render(fp[:mid]) + "\n")
-			b.WriteString(stDim.Render("      ") + stCyan.Render(fp[mid+1:]) + "\n")
-		} else {
-			b.WriteString(stDim.Render("  FP: ") + stCyan.Render(fp) + "\n")
-		}
-}
+	b.WriteString(title3 + "  " + stDim.Render("v"+version) + stDim.Render(" │ ") + fpStr + "\n")
 }
 
 func (m tuiModel) renderCompactBanner(b *strings.Builder) {
 	fpStr := stDim.Render("(no TLS)")
 	if m.serverFingerprint != "" {
-		fpStr = stCyan.Render(tuiTruncate(m.serverFingerprint, 47))
+		fpStr = stCyan.Render(tuiShortFingerprint(m.serverFingerprint, 8))
 	}
-	b.WriteString(stAccent.Bold(true).Render("  BURROW v"+version) + stDim.Render(" │ FP: ") + fpStr + "\n")
+	b.WriteString(stAccent.Bold(true).Render("  BURROW v"+version) + stDim.Render(" │ ") + fpStr + "\n")
 }
 
 // ── Status Bar ──────────────────────────────────────────────────────────────
@@ -1544,7 +1532,7 @@ func (m tuiModel) renderLogPanel(b *strings.Builder) {
 		return
 	}
 
-	maxLines := 8
+	maxLines := 4
 	start := 0
 	if len(entries) > maxLines {
 		start = len(entries) - maxLines
@@ -1753,6 +1741,22 @@ func tuiTruncate(s string, maxLen int) string {
 		return s[:maxLen]
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// tuiShortFingerprint returns the first n colon-separated hex pairs from a
+// full SHA-256 fingerprint. e.g. tuiShortFingerprint("AB:CD:EF:...", 8)
+// returns "AB:CD:EF:01:23:45:67:89" (first 8 bytes, 23 chars).
+func tuiShortFingerprint(fp string, pairs int) string {
+	count := 0
+	for i, c := range fp {
+		if c == ':' {
+			count++
+			if count == pairs {
+				return fp[:i]
+			}
+		}
+	}
+	return fp
 }
 
 // ── RunTUI ──────────────────────────────────────────────────────────────────
