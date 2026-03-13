@@ -1,4 +1,4 @@
-.PHONY: build build-local build-stager build-all test clean tidy upx sizes
+.PHONY: build build-local build-stager build-tools build-stager-evasion build-stager-packed build-all test clean tidy sizes
 
 GO        ?= go
 MODULE    := github.com/loudmumble/burrow/cmd/burrow/cmd
@@ -7,7 +7,6 @@ STAGER    := stager
 BUILD_DIR := build
 VERSION   ?= $(shell git describe --tags --always 2>/dev/null || echo "3.0.0")
 LDFLAGS   := -s -w -X $(MODULE).version=$(VERSION)
-UPX       ?= /home/mumble/.local/bin/upx
 
 PLATFORMS := linux/amd64 linux/arm64 windows/amd64 darwin/amd64 darwin/arm64
 
@@ -53,7 +52,28 @@ build-stager:
 		-ldflags="-s -w" -o $(BUILD_DIR)/$(STAGER)-windows-amd64.exe ./cmd/stager/
 	@echo "Stager built (linux-amd64 + windows-amd64)."
 
-# Build everything: full burrow + stager (linux + windows amd64), then UPX
+# Build obfuscation tools
+build-tools:
+	@mkdir -p tools/bin
+	$(GO) build -o tools/bin/strobf ./tools/strobf/
+	$(GO) build -o tools/bin/packer ./tools/packer/
+
+# Evasion stager: obfuscated strings + hardened build
+build-stager-evasion: build-tools
+	@echo "=== Evasion stager ==="
+	@rm -rf cmd/stager/_build
+	tools/bin/strobf -input cmd/stager/main.go -outdir cmd/stager/_build
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags="-s -w" -o $(BUILD_DIR)/$(STAGER)-evasion-linux-amd64 ./cmd/stager/_build/
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build -trimpath -ldflags="-s -w" -o $(BUILD_DIR)/$(STAGER)-evasion-windows-amd64.exe ./cmd/stager/_build/
+	@rm -rf cmd/stager/_build
+
+# Packed stager: evasion + custom compression
+build-stager-packed: build-stager-evasion
+	@echo "=== Packed stager ==="
+	tools/bin/packer -input $(BUILD_DIR)/$(STAGER)-evasion-linux-amd64 -output $(BUILD_DIR)/$(STAGER)-packed-linux-amd64 -goos linux -goarch amd64
+	tools/bin/packer -input $(BUILD_DIR)/$(STAGER)-evasion-windows-amd64.exe -output $(BUILD_DIR)/$(STAGER)-packed-windows-amd64.exe -goos windows -goarch amd64
+
+# Build everything: full burrow + stager + evasion + packed
 build-all:
 	@mkdir -p $(BUILD_DIR)
 	@echo "=== Full burrow ==="
@@ -66,33 +86,16 @@ build-all:
 		-ldflags="-s -w" -o $(BUILD_DIR)/$(STAGER)-linux-amd64 ./cmd/stager/
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build \
 		-ldflags="-s -w" -o $(BUILD_DIR)/$(STAGER)-windows-amd64.exe ./cmd/stager/
-	@echo "=== UPX compress ==="
-	cp $(BUILD_DIR)/$(BINARY)-linux-amd64 $(BUILD_DIR)/$(BINARY)-linux-amd64-upx && \
-		$(UPX) --best $(BUILD_DIR)/$(BINARY)-linux-amd64-upx || true
-	cp $(BUILD_DIR)/$(BINARY)-windows-amd64.exe $(BUILD_DIR)/$(BINARY)-windows-amd64-upx.exe && \
-		$(UPX) --best $(BUILD_DIR)/$(BINARY)-windows-amd64-upx.exe || true
-	cp $(BUILD_DIR)/$(STAGER)-linux-amd64 $(BUILD_DIR)/$(STAGER)-linux-amd64-upx && \
-		$(UPX) --best $(BUILD_DIR)/$(STAGER)-linux-amd64-upx || true
-	cp $(BUILD_DIR)/$(STAGER)-windows-amd64.exe $(BUILD_DIR)/$(STAGER)-windows-amd64-upx.exe && \
-		$(UPX) --best $(BUILD_DIR)/$(STAGER)-windows-amd64-upx.exe || true
+	@$(MAKE) --no-print-directory build-stager-packed
 	@echo "=== Done ==="
 	@$(MAKE) --no-print-directory sizes
 
-# UPX compress existing binaries
-upx:
-	@for f in $(BUILD_DIR)/$(BINARY)-linux-amd64 $(BUILD_DIR)/$(BINARY)-windows-amd64.exe \
-	          $(BUILD_DIR)/$(STAGER)-linux-amd64 $(BUILD_DIR)/$(STAGER)-windows-amd64.exe; do \
-		if [ -f "$$f" ]; then \
-			cp "$$f" "$$f-upx$${f##*.exe}" 2>/dev/null || cp "$$f" "$${f%.*}-upx$${f##*[^.]}" 2>/dev/null; \
-			$(UPX) --best "$$f" || true; \
-		fi; \
-	done
 
 # Print binary sizes
 sizes:
 	@echo ""
 	@echo "Binary sizes:"
-	@ls -lh $(BUILD_DIR)/ 2>/dev/null | grep -E '\.(exe|amd64)' | awk '{printf "  %-45s %s\n", $$NF, $$5}' || true
+	@ls -lh $(BUILD_DIR)/ 2>/dev/null | grep -v '^total' | grep -v '^d' | awk '{printf "  %-45s %s\n", $$NF, $$5}' || true
 
 test:
 	$(GO) test ./...
