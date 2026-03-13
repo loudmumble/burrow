@@ -1663,9 +1663,8 @@ func (m tuiModel) renderStatusBar() string {
 	activeCount := 0
 	var totalIn, totalOut int64
 	socksCount := 0
-	socksAddr := "--"
+	socksAddr := ""
 	tunCount := 0
-	totalTunnels := 0 // Feature 7
 
 	for _, s := range m.sessions {
 		if s.Active {
@@ -1680,16 +1679,10 @@ func (m tuiModel) renderStatusBar() string {
 			socksCount++
 			socksAddr = s.SocksAddr
 		}
-		totalTunnels += s.Tunnels // Feature 7
 	}
 
 	sep := stDim.Render(" │ ")
 
-	// Line 1: identity + uptime + tunnel count
-	line1 := "  " + stAccent.Render("burrow") + sep + stDim.Render(uptimeStr) +
-		sep + stDim.Render(fmt.Sprintf("%dT", totalTunnels)) + stDim.Render(" │")
-
-	// Line 2: agent stats, tunnel/socks status, bandwidth
 	tunStr := stDim.Render("--")
 	if tunCount > 0 {
 		tunStr = stGreen.Render("active")
@@ -1703,15 +1696,34 @@ func (m tuiModel) renderStatusBar() string {
 		spinStr = " " + m.spinner.View()
 	}
 
-	line2 := "  " + strings.Join([]string{
-		fmt.Sprintf("%d agents", activeCount),
-		fmt.Sprintf("TUN: %s", tunStr),
-		fmt.Sprintf("SOCKS: %s", socksStr),
-		stGreen.Render("▲"+tuiFormatBytes(totalOut)) + " " + stCyan.Render("▼"+tuiFormatBytes(totalIn)),
-	}, sep) + spinStr
+	bar := " " + stAccent.Render("burrow") + sep + stDim.Render(uptimeStr) +
+		sep + fmt.Sprintf("%d agents", activeCount) +
+		sep + "TUN: " + tunStr +
+		sep + "SOCKS: " + socksStr +
+		sep + stGreen.Render("▲"+tuiFormatBytes(totalOut)) + " " + stCyan.Render("▼"+tuiFormatBytes(totalIn)) +
+		spinStr
 
-	// Status bar spans TUI width (capped at 100)
-	return stStatusBar.Width(m.width).Render(line1) + "\n" + stStatusBar.Width(m.width).Render(line2)
+	// Match log panel width
+	barWidth := m.width - 4
+	if barWidth < 40 {
+		barWidth = 40
+	}
+
+	// Append status message if space allows
+	if m.statusMsg != "" {
+		contentWidth := barWidth - 2 // stStatusBar Padding(0, 1)
+		visWidth := lipgloss.Width(bar)
+		remaining := contentWidth - visWidth - 3
+		if remaining > 4 {
+			msg := m.statusMsg
+			if len(msg) > remaining {
+				msg = msg[:remaining-3] + "..."
+			}
+			bar += sep + stDim.Render(msg)
+		}
+	}
+
+	return stStatusBar.Width(barWidth).Render(bar)
 }
 
 // ── Session List View ───────────────────────────────────────────────────────
@@ -1818,9 +1830,6 @@ func (m tuiModel) viewSessions(b *strings.Builder) {
 	b.WriteString("\n")
 	m.renderLogPanel(b)
 
-	if m.statusMsg != "" {
-		b.WriteString("\n" + stGreen.Render("  "+m.statusMsg))
-	}
 
 	b.WriteString("\n")
 	b.WriteString(renderHelpBar([]string{
@@ -1933,9 +1942,6 @@ func (m tuiModel) viewDetail(b *strings.Builder) {
 
 	if m.err != nil {
 		b.WriteString("\n" + stError.Render("  ✗ "+m.err.Error()))
-	}
-	if m.statusMsg != "" {
-		b.WriteString("\n" + stGreen.Render("  "+m.statusMsg))
 	}
 
 	// Log panel
