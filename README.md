@@ -17,11 +17,45 @@ A WebUI dashboard and interactive TUI are available for session management. The 
 Requires Go 1.24+.
 
 ```bash
-# Build for current platform
-make build          # -> build/burrow
+# Build for current platform only (fast)
+make build-local        # -> build/burrow
 
-# Cross-compile all platforms
+# Cross-compile all platforms (linux/windows/darwin, amd64+arm64)
+make build              # -> build/burrow-<os>-<arch>[.exe]
+
+# Build single platform
+make build-linux-amd64
+make build-linux-arm64
+make build-windows-amd64
+
+# Build all platforms + stager + evasion + packed variants
 make build-all
+```
+
+### Stager
+
+The stager (`cmd/stager/`) is a minimal agent for initial access — no TUI, no TUN, no SOCKS5. Built separately:
+
+```bash
+# Standard stager (linux-amd64 + windows-amd64)
+make build-stager       # -> build/stager-linux-amd64, build/stager-windows-amd64.exe
+
+# Obfuscated stager (requires anvil toolkit cloned next to burrow)
+make build-stager-evasion
+
+# Evasion + packed (smallest binary)
+make build-stager-packed
+```
+
+Embed server address and fingerprint at compile time with `-ldflags`:
+
+```bash
+CGO_ENABLED=0 go build -ldflags="-s -w \
+  -X main.defaultServer=10.0.0.1:11601 \
+  -X main.defaultNoTLS=false \
+  -X main.defaultFingerprint=AB:CD:EF:01:23:45:67:89 \
+  -X main.defaultMasq=true" \
+  -o build/stager ./cmd/stager/
 ```
 
 Pre-compiled binaries are in `build/`:
