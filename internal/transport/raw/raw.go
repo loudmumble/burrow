@@ -84,16 +84,23 @@ func (t *RawTransport) Accept() (net.Conn, error) {
 }
 
 // Dial connects to a remote TCP/TLS endpoint. Uses a 10-second timeout
-// for the underlying TCP connection.
+// for the underlying TCP connection. Respects context cancellation for
+// both plain TCP and TLS connections.
 func (t *RawTransport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (net.Conn, error) {
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	if tlsCfg != nil {
-		c, err := tls.DialWithDialer(dialer, "tcp", addr, tlsCfg)
+		// Dial plain TCP first with context, then upgrade to TLS.
+		rawConn, err := dialer.DialContext(ctx, "tcp", addr)
 		if err != nil {
 			return nil, err
 		}
-		transport.TuneConn(c)
-		return c, nil
+		transport.TuneConn(rawConn)
+		tlsConn := tls.Client(rawConn, tlsCfg)
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			rawConn.Close()
+			return nil, err
+		}
+		return tlsConn, nil
 	}
 	c, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {

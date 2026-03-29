@@ -171,6 +171,65 @@ func TestSessionEncryptDecrypt(t *testing.T) {
 	}
 }
 
+func TestSessionReplayRejected(t *testing.T) {
+	alice, _ := NewSession(ChaCha20Poly1305)
+	bob, _ := NewSession(ChaCha20Poly1305)
+	alice.SetPeerPublicKey(bob.LocalPublicKey())
+	bob.SetPeerPublicKey(alice.LocalPublicKey())
+
+	// Encrypt two messages
+	frame1, err := alice.Encrypt([]byte("msg1"), nil)
+	if err != nil {
+		t.Fatalf("alice.Encrypt 1: %v", err)
+	}
+	frame2, err := alice.Encrypt([]byte("msg2"), nil)
+	if err != nil {
+		t.Fatalf("alice.Encrypt 2: %v", err)
+	}
+
+	// Decrypt in order — should succeed
+	if _, err := bob.Decrypt(frame1, nil); err != nil {
+		t.Fatalf("bob.Decrypt frame1: %v", err)
+	}
+	if _, err := bob.Decrypt(frame2, nil); err != nil {
+		t.Fatalf("bob.Decrypt frame2: %v", err)
+	}
+
+	// Replay frame1 — should be rejected
+	_, err = bob.Decrypt(frame1, nil)
+	if err != ErrReplayDetected {
+		t.Fatalf("expected ErrReplayDetected, got %v", err)
+	}
+
+	// Replay frame2 — should also be rejected
+	_, err = bob.Decrypt(frame2, nil)
+	if err != ErrReplayDetected {
+		t.Fatalf("expected ErrReplayDetected on frame2, got %v", err)
+	}
+}
+
+func TestSessionCounterExhausted(t *testing.T) {
+	alice, _ := NewSession(ChaCha20Poly1305)
+	bob, _ := NewSession(ChaCha20Poly1305)
+	alice.SetPeerPublicKey(bob.LocalPublicKey())
+	bob.SetPeerPublicKey(alice.LocalPublicKey())
+
+	// Force sendCounter near uint32 max
+	alice.sendCounter.Store(0xFFFFFFFF)
+
+	// This should succeed (counter = 0xFFFFFFFF)
+	_, err := alice.Encrypt([]byte("last"), nil)
+	if err != nil {
+		t.Fatalf("encrypt at max uint32: %v", err)
+	}
+
+	// This should fail (counter = 0x100000000, overflows uint32)
+	_, err = alice.Encrypt([]byte("overflow"), nil)
+	if err != ErrCounterExhausted {
+		t.Fatalf("expected ErrCounterExhausted, got %v", err)
+	}
+}
+
 func TestSessionNoPeerKey(t *testing.T) {
 	s, _ := NewSession(ChaCha20Poly1305)
 	_, err := s.Encrypt([]byte("data"), nil)

@@ -40,15 +40,13 @@ var agentCmd = &cobra.Command{
 	Long: `Start the Burrow agent that connects back to a proxy server.
 
 The agent establishes a multiplexed connection to the server and waits for
-tunnel and route commands. TLS is enabled by default.
-
-Examples:
-  burrow agent --connect 10.0.0.1:11601
+tunnel and route commands. TLS is enabled by default with certificate
+fingerprint verification. Supports multiple transports for firewall evasion.`,
+	Example: `  burrow agent -c 10.0.0.1:11601
   burrow agent -c 10.0.0.1:11601 --fp AB:CD:EF:01:23:45:67:89
-  burrow agent --connect wss://10.0.0.1:443 --transport ws
-  burrow agent --connect 10.0.0.1:5353 --transport dns
-  burrow agent --connect 10.0.0.1 --transport icmp
-  burrow agent -c 10.0.0.1:11601 --max-retries 5`,
+  burrow agent -c wss://10.0.0.1:443 -t ws
+  burrow agent -c 10.0.0.1:5353 -t dns
+  burrow agent -c 10.0.0.1 -t icmp`,
 	Run: runAgent,
 }
 

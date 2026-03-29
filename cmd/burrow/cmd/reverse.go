@@ -20,6 +20,8 @@ with keepalive heartbeats and exponential backoff reconnection.
 Example:
   burrow tunnel reverse -c 10.0.0.1:8443
   burrow tunnel reverse -c 10.0.0.1:8443 -r 127.0.0.1:22`,
+	Example: `  burrow tunnel reverse -c 10.0.0.1:8443
+  burrow tunnel reverse -c 10.0.0.1:8443 -r 127.0.0.1:22 --max-retries 5`,
 	Run: func(cmd *cobra.Command, args []string) {
 		connectAddr, _ := cmd.Flags().GetString("connect")
 		remote, _ := cmd.Flags().GetString("remote")

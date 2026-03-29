@@ -11,6 +11,32 @@ function dashboard() {
     connected: false,
     errorMessage: '',
 
+    // TUN state
+    tunLoading: false,
+
+    // Exec state
+    execInput: '',
+    execOutput: null,
+    execError: '',
+    execLoading: false,
+
+    // Download state
+    downloadPath: '',
+    downloadResult: null,
+    downloadFileName: '',
+    downloadSize: '',
+    downloadError: '',
+    downloadLoading: false,
+    _downloadData: null,
+
+    // Upload state
+    uploadPath: '',
+    uploadFileData: null,
+    uploadFileName: '',
+    uploadError: '',
+    uploadSuccess: '',
+    uploadLoading: false,
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     formatBytes(n) {
@@ -267,6 +293,172 @@ function dashboard() {
       } catch (e) {
         this.showError('Failed to remove route. Check your connection.');
         console.error('remove route:', e);
+      }
+    },
+
+    // ── TUN controls ─────────────────────────────────────────────────────────
+
+    async startTun() {
+      if (!this.selected) return;
+      this.tunLoading = true;
+      try {
+        const res = await fetch('/api/sessions/' + this.selected + '/tun', {
+          method: 'POST',
+          headers: this.authHeaders()
+        });
+        if (this.handleFetchError(res, 'Start TUN')) return;
+        this.fetchSessions();
+      } catch (e) {
+        this.showError('Failed to start TUN interface.');
+        console.error('start tun:', e);
+      } finally {
+        this.tunLoading = false;
+      }
+    },
+
+    async stopTun() {
+      if (!this.selected) return;
+      this.tunLoading = true;
+      try {
+        const res = await fetch('/api/sessions/' + this.selected + '/tun', {
+          method: 'DELETE',
+          headers: this.authHeaders()
+        });
+        if (this.handleFetchError(res, 'Stop TUN')) return;
+        this.fetchSessions();
+      } catch (e) {
+        this.showError('Failed to stop TUN interface.');
+        console.error('stop tun:', e);
+      } finally {
+        this.tunLoading = false;
+      }
+    },
+
+    // ── Command execution ────────────────────────────────────────────────────
+
+    async execCommand() {
+      if (!this.selected || !this.execInput.trim()) return;
+      this.execLoading = true;
+      this.execOutput = null;
+      this.execError = '';
+      try {
+        const res = await fetch('/api/sessions/' + this.selected + '/exec', {
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json' }, this.authHeaders()),
+          body: JSON.stringify({ command: this.execInput.trim() })
+        });
+        if (this.handleFetchError(res, 'Execute command')) return;
+        const data = await res.json();
+        this.execOutput = data.output || '';
+        this.execError = data.error || '';
+      } catch (e) {
+        this.showError('Failed to execute command.');
+        console.error('exec:', e);
+      } finally {
+        this.execLoading = false;
+      }
+    },
+
+    // ── File download ────────────────────────────────────────────────────────
+
+    async downloadFile() {
+      if (!this.selected || !this.downloadPath.trim()) return;
+      this.downloadLoading = true;
+      this.downloadResult = null;
+      this.downloadError = '';
+      this._downloadData = null;
+      try {
+        const res = await fetch('/api/sessions/' + this.selected + '/download', {
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json' }, this.authHeaders()),
+          body: JSON.stringify({ file_path: this.downloadPath.trim() })
+        });
+        if (this.handleFetchError(res, 'Download file')) return;
+        const data = await res.json();
+        if (data.error) {
+          this.downloadError = data.error;
+          this.downloadResult = true;
+          return;
+        }
+        this.downloadFileName = data.file_name || this.downloadPath.split(/[/\\]/).pop();
+        this.downloadSize = this.formatBytes(data.size || 0);
+        this._downloadData = data.data; // base64-encoded
+        this.downloadResult = true;
+      } catch (e) {
+        this.showError('Failed to download file.');
+        console.error('download:', e);
+      } finally {
+        this.downloadLoading = false;
+      }
+    },
+
+    saveDownload() {
+      if (!this._downloadData) return;
+      try {
+        const raw = atob(this._downloadData);
+        const bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+        const blob = new Blob([bytes], { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = this.downloadFileName || 'download';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        this.showError('Failed to save file.');
+        console.error('save download:', e);
+      }
+    },
+
+    // ── File upload ──────────────────────────────────────────────────────────
+
+    handleFileSelect(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      this.uploadFileName = file.name;
+      const reader = new FileReader();
+      reader.onload = () => {
+        // Convert ArrayBuffer to base64
+        const bytes = new Uint8Array(reader.result);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        this.uploadFileData = btoa(binary);
+      };
+      reader.readAsArrayBuffer(file);
+    },
+
+    async uploadFile() {
+      if (!this.selected || !this.uploadPath.trim() || !this.uploadFileData) return;
+      this.uploadLoading = true;
+      this.uploadError = '';
+      this.uploadSuccess = '';
+      try {
+        const res = await fetch('/api/sessions/' + this.selected + '/upload', {
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json' }, this.authHeaders()),
+          body: JSON.stringify({
+            file_path: this.uploadPath.trim(),
+            data: this.uploadFileData
+          })
+        });
+        if (this.handleFetchError(res, 'Upload file')) return;
+        const data = await res.json();
+        if (data.error) {
+          this.uploadError = data.error;
+          return;
+        }
+        this.uploadSuccess = 'Uploaded ' + this.formatBytes(data.size || 0) + ' to ' + this.uploadPath;
+        this.uploadPath = '';
+        this.uploadFileData = null;
+        this.uploadFileName = '';
+      } catch (e) {
+        this.showError('Failed to upload file.');
+        console.error('upload:', e);
+      } finally {
+        this.uploadLoading = false;
       }
     }
   };

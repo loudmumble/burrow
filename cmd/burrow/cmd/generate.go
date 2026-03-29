@@ -32,6 +32,9 @@ Examples:
   burrow generate webshell --format aspx --key s3cret -o tunnel.aspx
   burrow generate webshell --format jsp --key s3cret -o tunnel.jsp
   burrow generate webshell --format php --key s3cret  (prints to stdout)`,
+	Example: `  burrow generate webshell -f php -k s3cret -o tunnel.php
+  burrow generate webshell -f aspx -k s3cret -o tunnel.aspx
+  burrow generate webshell -f jsp -k s3cret -o tunnel.jsp`,
 	Run: func(cmd *cobra.Command, args []string) {
 		format, _ := cmd.Flags().GetString("format")
 		key, _ := cmd.Flags().GetString("key")

@@ -59,6 +59,11 @@ func TestParsePortRange(t *testing.T) {
 		{"1-5", 5},
 		{"22,80,100-102", 5},
 		{"", 0},
+		{"0", 0},           // port 0 invalid
+		{"70000", 0},       // above 65535
+		{"0-10", 0},        // start below 1
+		{"65530-65535", 6}, // valid high range
+		{"100-50", 0},      // start > end
 	}
 
 	for _, tc := range tests {

@@ -178,7 +178,10 @@ Example:
 			Active    bool     `json:"active"`
 			CreatedAt string   `json:"created_at"`
 		}
-		json.NewDecoder(resp.Body).Decode(&sess)
+		if err := json.NewDecoder(resp.Body).Decode(&sess); err != nil {
+			fmt.Fprintf(os.Stderr, "[!] Failed to decode session info: %v\n", err)
+			os.Exit(1)
+		}
 
 		fmt.Printf("[*] Session: %s\n", sess.ID)
 		fmt.Printf("    Hostname:  %s\n", sess.Hostname)
@@ -314,7 +317,10 @@ func printSessionTunnels(client *http.Client, baseURL, sessionID, token string) 
 		Protocol   string `json:"protocol"`
 		Active     bool   `json:"active"`
 	}
-	json.NewDecoder(resp.Body).Decode(&tunnels)
+	if err := json.NewDecoder(resp.Body).Decode(&tunnels); err != nil {
+		fmt.Fprintf(os.Stderr, "    Tunnels:   (decode error: %v)\n", err)
+		return
+	}
 
 	if len(tunnels) == 0 {
 		fmt.Println("    Tunnels:   (none)")
@@ -343,7 +349,10 @@ func printSessionRoutes(client *http.Client, baseURL, sessionID, token string) {
 		CIDR   string `json:"cidr"`
 		Active bool   `json:"active"`
 	}
-	json.NewDecoder(resp.Body).Decode(&routes)
+	if err := json.NewDecoder(resp.Body).Decode(&routes); err != nil {
+		fmt.Fprintf(os.Stderr, "    Routes:    (decode error: %v)\n", err)
+		return
+	}
 
 	if len(routes) == 0 {
 		fmt.Println("    Routes:    (none)")
@@ -375,7 +384,10 @@ func replInfo(client *http.Client, baseURL, sessionID, token string) {
 		Active    bool     `json:"active"`
 		CreatedAt string   `json:"created_at"`
 	}
-	json.NewDecoder(resp.Body).Decode(&sess)
+	if err := json.NewDecoder(resp.Body).Decode(&sess); err != nil {
+		fmt.Fprintf(os.Stderr, "[!] Failed to decode session info: %v\n", err)
+		return
+	}
 
 	fmt.Printf("  ID:        %s\n", sess.ID)
 	fmt.Printf("  Hostname:  %s\n", sess.Hostname)

@@ -90,7 +90,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.listener = ln
 
 	s.httpSrv = &http.Server{
-		Handler:      mux,
+		Handler:      securityHeaders(mux),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 0, // SSE needs unlimited write time
 		IdleTimeout:  120 * time.Second,
@@ -125,6 +125,17 @@ func (s *Server) Stop() error {
 	defer cancel()
 	s.logger.Printf("shutting down")
 	return s.httpSrv.Shutdown(ctx)
+}
+
+// securityHeaders wraps an http.Handler with standard security response headers.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Addr returns the listener address once the server has started.

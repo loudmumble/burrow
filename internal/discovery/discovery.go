@@ -290,12 +290,15 @@ func ParsePortRange(s string) []int {
 		if strings.Contains(part, "-") {
 			var start, end int
 			if n, _ := fmt.Sscanf(part, "%d-%d", &start, &end); n == 2 {
+				if start < 1 || end > 65535 || start > end {
+					continue
+				}
 				for i := start; i <= end; i++ {
 					ports = append(ports, i)
 				}
 			}
 		} else {
-			if p, err := strconv.Atoi(part); err == nil && p > 0 {
+			if p, err := strconv.Atoi(part); err == nil && p > 0 && p <= 65535 {
 				ports = append(ports, p)
 			}
 		}

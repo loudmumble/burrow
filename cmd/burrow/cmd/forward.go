@@ -25,6 +25,8 @@ var tunnelLocalCmd = &cobra.Command{
 
 Example:
   burrow tunnel local --listen 127.0.0.1:8080 --remote 10.0.0.5:80`,
+	Example: `  burrow tunnel local -l 127.0.0.1:8080 -r 10.0.0.5:80
+  burrow tunnel local -l 0.0.0.0:3389 -r 10.0.0.5:3389`,
 	Run: func(cmd *cobra.Command, args []string) {
 		listen, _ := cmd.Flags().GetString("listen")
 		remote, _ := cmd.Flags().GetString("remote")
@@ -63,6 +65,7 @@ var tunnelRemoteCmd = &cobra.Command{
 
 Example:
   burrow tunnel remote --listen 0.0.0.0:9090 --remote 192.168.1.10:22`,
+	Example: `  burrow tunnel remote -l 0.0.0.0:9090 -r 192.168.1.10:22`,
 	Run: func(cmd *cobra.Command, args []string) {
 		listen, _ := cmd.Flags().GetString("listen")
 		remote, _ := cmd.Flags().GetString("remote")

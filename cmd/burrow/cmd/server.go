@@ -66,17 +66,14 @@ var serverCmd = &cobra.Command{
 	Long: `Start the Burrow proxy server that listens for incoming agent connections.
 
 Agents connect back to this server to establish multiplexed tunnels. TLS is
-enabled by default with auto-generated self-signed certificates.
-
-Examples:
-  burrow server
-  burrow server --listen 0.0.0.0:11601
+enabled by default with auto-generated self-signed certificates stored in
+~/.burrow/. Use --tui for an interactive dashboard, --webui for browser access,
+or --mcp-api for programmatic control.`,
+	Example: `  burrow server
+  burrow server -l 0.0.0.0:11601 --tui
+  burrow server --webui --mcp-api
   burrow server --cert server.pem --key server-key.pem
-  burrow server --webui
-  burrow server --webui 0.0.0.0:9090
-  burrow server --mcp-api
-  burrow server --tui
-  burrow server --transport ws --listen 0.0.0.0:443`,
+  burrow server -t ws -l 0.0.0.0:443`,
 	Run: runServer,
 }
 

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -36,7 +37,8 @@ Part of the Agent-HQ Attack Suite. Provides:
 }
 
 func init() {
-	rootCmd.SetVersionTemplate(fmt.Sprintf("Burrow v%s (commit: %s, built: %s)\n", version, commit, buildDate))
+	ver := strings.TrimPrefix(version, "v")
+	rootCmd.SetVersionTemplate(fmt.Sprintf("Burrow v%s (commit: %s, built: %s)\n", ver, commit, buildDate))
 }
 
 func Execute() {

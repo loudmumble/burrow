@@ -968,6 +968,171 @@ button, [role="button"], input[type="submit"] {
 }
 
 /* ============================================================
+   TUN CONTROLS
+   ============================================================ */
+
+.tun-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tun-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tun-status-text {
+  font-family: var(--font-mono) !important;
+  font-size: 11px !important;
+  color: var(--text-secondary);
+}
+
+.tun-btn-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tun-hint {
+  font-family: var(--font-mono) !important;
+  font-size: 9px !important;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+}
+
+.btn-stop {
+  all: unset !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 5px !important;
+  font-family: var(--font-mono) !important;
+  font-size: 10px !important;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 0 13px !important;
+  height: 30px !important;
+  border: 1px solid var(--error-border) !important;
+  background: var(--error-bg) !important;
+  color: var(--error) !important;
+  cursor: pointer !important;
+  transition: all var(--t-fast);
+  white-space: nowrap;
+  border-radius: 2px !important;
+  box-sizing: border-box !important;
+}
+
+.btn-stop:hover {
+  background: rgba(255, 57, 57, 0.14) !important;
+  box-shadow: 0 0 10px rgba(255, 57, 57, 0.18) !important;
+}
+
+.count-active {
+  color: var(--status-active) !important;
+  background: rgba(0, 232, 122, 0.09) !important;
+  border-color: rgba(0, 232, 122, 0.22) !important;
+}
+
+/* ============================================================
+   EXEC OUTPUT
+   ============================================================ */
+
+.exec-output {
+  margin-top: 10px !important;
+  border: 1px solid var(--border-dim);
+  background: var(--bg-surface);
+}
+
+.exec-output-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px !important;
+  background: var(--bg-surface-alt);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.exec-output-label {
+  font-family: var(--font-mono) !important;
+  font-size: 9px !important;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  flex: 1;
+}
+
+.exec-output-pre {
+  padding: 10px !important;
+  font-family: var(--font-mono) !important;
+  font-size: 11px !important;
+  color: var(--text-secondary) !important;
+  background: transparent !important;
+  border: none !important;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 300px;
+  overflow-y: auto;
+  margin: 0 !important;
+  line-height: 1.5 !important;
+}
+
+.exec-output-error {
+  padding: 6px 10px !important;
+  font-family: var(--font-mono) !important;
+  font-size: 10px !important;
+  color: var(--error);
+  background: var(--error-bg);
+  border-top: 1px solid var(--error-border);
+}
+
+/* ============================================================
+   FILE OPERATIONS
+   ============================================================ */
+
+.file-ops-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.file-op-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.file-op-label {
+  font-family: var(--font-mono) !important;
+  font-size: 9px !important;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.file-result {
+  border: 1px solid var(--border-dim);
+  background: var(--bg-surface);
+}
+
+.file-size {
+  font-family: var(--font-mono) !important;
+  font-size: 10px !important;
+  color: var(--status-active);
+}
+
+.file-success {
+  font-family: var(--font-mono) !important;
+  font-size: 10px !important;
+  color: var(--status-active);
+  padding: 4px 0 !important;
+}
+
+/* ============================================================
    SCROLLBAR (global)
    ============================================================ */
 

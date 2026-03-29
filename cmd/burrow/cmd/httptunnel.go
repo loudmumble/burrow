@@ -35,6 +35,9 @@ Example:
   burrow httptunnel server -l 0.0.0.0:8080
   burrow httptunnel server -l 0.0.0.0:443 -k s3cret
   burrow httptunnel server -l :8080 --path /api/health -k mykey`,
+	Example: `  burrow httptunnel server -l 0.0.0.0:8080
+  burrow httptunnel server -l 0.0.0.0:443 -k s3cret
+  burrow httptunnel server -l :8080 --path /api/health -k mykey`,
 	Run: func(cmd *cobra.Command, args []string) {
 		listen, _ := cmd.Flags().GetString("listen")
 		key, _ := cmd.Flags().GetString("key")
@@ -94,15 +97,12 @@ Example:
   burrow httptunnel client -c http://target:8080/b -l 127.0.0.1:1080
   burrow httptunnel client -c https://target:443/b -k s3cret
   burrow httptunnel client -c http://target:8080/api/health -k mykey -l 0.0.0.0:9050`,
+	Example: `  burrow httptunnel client -c http://target:8080/b -l 127.0.0.1:1080
+  burrow httptunnel client -c https://target:443/b -k s3cret`,
 	Run: func(cmd *cobra.Command, args []string) {
 		serverURL, _ := cmd.Flags().GetString("connect")
 		key, _ := cmd.Flags().GetString("key")
 		socksAddr, _ := cmd.Flags().GetString("listen")
-
-		if serverURL == "" {
-			fmt.Fprintln(os.Stderr, "[!] -c / --connect is required")
-			os.Exit(1)
-		}
 
 		cfg := &httptunnel.ClientConfig{
 			ServerURL: serverURL,
@@ -159,4 +159,5 @@ func init() {
 	httptunnelClientCmd.Flags().StringP("connect", "c", "", "HTTP tunnel server URL (e.g., http://target:8080/b)")
 	httptunnelClientCmd.Flags().StringP("listen", "l", "127.0.0.1:1080", "Local SOCKS5 listen address")
 	httptunnelClientCmd.Flags().StringP("key", "k", "", "Shared encryption/authentication key")
+	httptunnelClientCmd.MarkFlagRequired("connect")
 }

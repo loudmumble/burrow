@@ -295,8 +295,8 @@ func tuiTickCmd() tea.Cmd {
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = min(msg.Width, 100)
-		m.height = min(msg.Height, 30)
+		m.width = min(msg.Width, 200)
+		m.height = min(msg.Height, 60)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -2353,42 +2353,6 @@ func (m tuiModel) renderLogPanel(b *strings.Builder) {
 		ts := e.ts.Format("15:04:05")
 		b.WriteString(stDimmer.Render("  "+ts+" ") + stDim.Render(tuiTruncate(e.text, m.width-14)) + "\n")
 	}
-}
-
-// ── Bandwidth Bar (replaced by sparkline but kept as fallback) ──────────────
-
-func renderBwBar(rate *rateSnapshot) string {
-	if rate == nil {
-		return ""
-	}
-	// Scale: 10 blocks, max 10MB/s
-	const maxRate = 10 * 1024 * 1024
-	const barLen = 10
-	total := rate.rateIn + rate.rateOut
-	filled := int(total / maxRate * barLen)
-	if filled > barLen {
-		filled = barLen
-	}
-	if total > 0 && filled == 0 {
-		filled = 1
-	}
-
-	bar := ""
-	for i := 0; i < barLen; i++ {
-		if i < filled {
-			switch {
-			case i < barLen/3:
-				bar += stGreen.Render("▰")
-			case i < 2*barLen/3:
-				bar += stYellow.Render("▰")
-			default:
-				bar += stRed.Render("▰")
-			}
-		} else {
-			bar += stDimmer.Render("▱")
-		}
-	}
-	return bar
 }
 
 // ── Help Overlay ─────────────────────────────────────────────────────────

@@ -249,6 +249,123 @@
         </form>
       </div>
 
+      <!-- ── TUN Interface section ───────────────────────────────────── -->
+      <div class="section">
+        <div class="section-heading">
+          <span class="section-title">// TUN Interface</span>
+          <span class="section-count"
+                :class="selectedSessionData && selectedSessionData.tun_active ? 'count-active' : ''"
+                x-text="selectedSessionData && selectedSessionData.tun_active ? 'ON' : 'OFF'"></span>
+        </div>
+        <div class="tun-controls">
+          <div class="tun-status-row">
+            <span class="status-dot"
+                  :class="selectedSessionData && selectedSessionData.tun_active ? 'active' : 'inactive'"></span>
+            <span class="tun-status-text"
+                  x-text="selectedSessionData && selectedSessionData.tun_active ? 'TUN active — transparent routing via burrow0' : 'TUN inactive — start to enable transparent pivoting'"></span>
+          </div>
+          <div class="tun-btn-row">
+            <button class="btn btn-primary"
+                    x-show="!(selectedSessionData && selectedSessionData.tun_active)"
+                    @click="startTun()"
+                    :disabled="tunLoading">▶ START TUN</button>
+            <button class="btn btn-stop"
+                    x-show="selectedSessionData && selectedSessionData.tun_active"
+                    @click="stopTun()"
+                    :disabled="tunLoading">⏹ STOP TUN</button>
+            <span class="tun-hint" x-show="!(selectedSessionData && selectedSessionData.tun_active)">Requires root on server. Add routes after starting.</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Command Execution section ───────────────────────────────── -->
+      <div class="section">
+        <div class="section-heading">
+          <span class="section-title">// Execute Command</span>
+        </div>
+        <form @submit.prevent="execCommand()">
+          <div class="form-row">
+            <input type="text"
+                   placeholder="whoami, dir C:\, cat /etc/hostname ..."
+                   x-model="execInput"
+                   :disabled="execLoading"
+                   @keydown.enter.prevent="execCommand()">
+            <button type="submit" class="btn btn-primary" :disabled="execLoading">
+              <span x-show="!execLoading">▶ RUN</span>
+              <span x-show="execLoading">…</span>
+            </button>
+          </div>
+        </form>
+        <div class="exec-output" x-show="execOutput !== null">
+          <div class="exec-output-header">
+            <span class="exec-output-label">OUTPUT</span>
+            <button class="copy-btn" @click="copyToClipboard(execOutput || '')" title="Copy output">COPY</button>
+          </div>
+          <pre class="exec-output-pre" x-text="execOutput"></pre>
+          <div class="exec-output-error" x-show="execError" x-text="execError"></div>
+        </div>
+      </div>
+
+      <!-- ── File Operations section ─────────────────────────────────── -->
+      <div class="section">
+        <div class="section-heading">
+          <span class="section-title">// File Operations</span>
+        </div>
+
+        <div class="file-ops-grid">
+          <!-- Download -->
+          <div class="file-op-block">
+            <div class="file-op-label">Download from target</div>
+            <form @submit.prevent="downloadFile()">
+              <div class="form-row">
+                <input type="text"
+                       placeholder="/etc/passwd, C:\Users\..."
+                       x-model="downloadPath"
+                       :disabled="downloadLoading">
+                <button type="submit" class="btn btn-primary" :disabled="downloadLoading">
+                  <span x-show="!downloadLoading">↓ GET</span>
+                  <span x-show="downloadLoading">…</span>
+                </button>
+              </div>
+            </form>
+            <div class="file-result" x-show="downloadResult">
+              <div class="exec-output-header">
+                <span class="exec-output-label" x-text="downloadFileName || 'DOWNLOAD'"></span>
+                <span class="file-size" x-text="downloadSize"></span>
+                <button class="copy-btn" @click="saveDownload()" title="Save to disk">SAVE</button>
+              </div>
+              <div class="exec-output-error" x-show="downloadError" x-text="downloadError"></div>
+            </div>
+          </div>
+
+          <!-- Upload -->
+          <div class="file-op-block">
+            <div class="file-op-label">Upload to target</div>
+            <form @submit.prevent="uploadFile()">
+              <div class="form-row">
+                <input type="text"
+                       placeholder="Remote path: /tmp/payload.bin"
+                       x-model="uploadPath"
+                       :disabled="uploadLoading">
+                <label class="btn" :class="uploadFileData ? 'btn-primary' : ''"
+                       :style="uploadLoading ? 'pointer-events:none;opacity:0.5' : ''">
+                  <span x-text="uploadFileName || '📎 FILE'"></span>
+                  <input type="file" style="display:none"
+                         @change="handleFileSelect($event)"
+                         :disabled="uploadLoading">
+                </label>
+                <button type="submit" class="btn btn-primary" :disabled="uploadLoading || !uploadFileData">
+                  <span x-show="!uploadLoading">↑ PUT</span>
+                  <span x-show="uploadLoading">…</span>
+                </button>
+              </div>
+            </form>
+            <div class="exec-output-error" x-show="uploadError" x-text="uploadError"></div>
+            <div class="file-success" x-show="uploadSuccess" x-text="uploadSuccess"></div>
+          </div>
+        </div>
+      </div>
+
     </div><!-- /detail-panel -->
 
     <!-- ── RIGHT: Empty state (no session selected) ───────────────────── -->

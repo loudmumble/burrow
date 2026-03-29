@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -55,6 +56,10 @@ var (
 	ErrFrameTooShort = errors.New("frame too short")
 	// ErrDecryptFailed is returned when AEAD decryption fails (tampered data).
 	ErrDecryptFailed = errors.New("decryption failed: invalid ciphertext or tag")
+	// ErrReplayDetected is returned when a decrypted frame has an already-seen counter.
+	ErrReplayDetected = errors.New("replay detected: counter not advancing")
+	// ErrCounterExhausted is returned when the send counter exceeds uint32 max.
+	ErrCounterExhausted = errors.New("counter exhausted: rotate key before sending more data")
 )
 
 // KeyPair holds an X25519 private/public key pair.
@@ -234,7 +239,11 @@ func (s *Session) Encrypt(plaintext []byte, aad []byte) ([]byte, error) {
 		return nil, ErrPeerKeyNotSet
 	}
 
-	counter := uint32(s.sendCounter.Add(1) - 1)
+	cnt := s.sendCounter.Add(1) - 1
+	if cnt > math.MaxUint32 {
+		return nil, ErrCounterExhausted
+	}
+	counter := uint32(cnt)
 	return EncryptFrame(s.sharedKey, plaintext, counter, s.suite, aad)
 }
 
@@ -252,12 +261,12 @@ func (s *Session) Decrypt(frame []byte, aad []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	// Track highest received counter for anti-replay
+	// Enforce strictly advancing counters for anti-replay.
+	next := uint64(counter) + 1
 	for {
 		current := s.recvCounter.Load()
-		next := uint64(counter) + 1
 		if next <= current {
-			break
+			return nil, ErrReplayDetected
 		}
 		if s.recvCounter.CompareAndSwap(current, next) {
 			break

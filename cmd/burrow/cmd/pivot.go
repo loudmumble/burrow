@@ -23,6 +23,9 @@ Example:
   burrow pivot --target 10.0.0.1 --port 8443
   burrow pivot --target 10.0.0.1 --port 8443 --hop 10.0.0.2:22 --hop 10.0.0.3:443
   burrow pivot --target 10.0.0.1 --port 8443 --local-port 1080`,
+	Example: `  burrow pivot --target 10.0.0.1 -p 8443
+  burrow pivot --target 10.0.0.1 -p 8443 --hop 10.0.0.2:22
+  burrow pivot --target 10.0.0.1 -p 8443 --local-port 1080`,
 	Run: func(cmd *cobra.Command, args []string) {
 		target, _ := cmd.Flags().GetString("target")
 		port, _ := cmd.Flags().GetInt("port")

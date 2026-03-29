@@ -24,6 +24,9 @@ Example:
   burrow scan --subnet 10.0.0.0/24
   burrow scan --subnet 192.168.1.0/24 --ports 22,80,443,3389
   burrow scan --subnet 10.0.0 --timeout 3s`,
+	Example: `  burrow scan -s 10.0.0.0/24
+  burrow scan -s 192.168.1.0/24 -p 22,80,443,3389
+  burrow scan -s 10.0.0 --timeout 3s --concurrency 512`,
 	Run: func(cmd *cobra.Command, args []string) {
 		subnet, _ := cmd.Flags().GetString("subnet")
 		portsStr, _ := cmd.Flags().GetString("ports")
@@ -32,6 +35,7 @@ Example:
 
 		timeout, err := time.ParseDuration(timeoutStr)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "[!] Invalid timeout %q, using default 2s\n", timeoutStr)
 			timeout = 2 * time.Second
 		}
 
