@@ -22,7 +22,7 @@ var rootCmd = &cobra.Command{
 	Short: "Network pivoting and tunneling tool",
 	Long: `Burrow — Network pivoting, tunneling, and agent management.
 
-Part of the Agent-HQ Attack Suite. Provides:
+Provides:
   - SOCKS5 proxy server (RFC 1928) with session routing
   - Local/remote TCP port forwarding
   - Reverse tunnel with keepalive and auto-reconnect

@@ -18,6 +18,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -608,7 +609,19 @@ func (t *HTTPTransport) Dial(ctx context.Context, addr string, tlsCfg *tls.Confi
 		Timeout:   60 * time.Second,
 	}
 
-	baseURL := fmt.Sprintf("%s://%s%s", scheme, addr, defaultPathPrefix)
+	// Strip scheme prefix if the caller passed a full URL (e.g. "http://host:port").
+	host := addr
+	for _, prefix := range []string{"https://", "http://"} {
+		if strings.HasPrefix(host, prefix) {
+			host = strings.TrimPrefix(host, prefix)
+			if prefix == "https://" && tlsCfg == nil {
+				scheme = "https"
+			}
+			break
+		}
+	}
+
+	baseURL := fmt.Sprintf("%s://%s%s", scheme, host, defaultPathPrefix)
 
 	// POST /t/connect to create a stream.
 	connectURL := baseURL + "connect"

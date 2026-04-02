@@ -38,7 +38,6 @@ Examples:
 
 func init() {
 	rootCmd.AddCommand(relayCmd)
-	relayCmd.Flags().Bool("tls", false, "Wrap connections in TLS")
 }
 
 func runRelay(cmd *cobra.Command, args []string) {
