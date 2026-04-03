@@ -90,14 +90,20 @@ build-stager-packed: build-stager-evasion
 	$(ANVIL) pack -input $(BUILD_DIR)/$(STAGER)-evasion-linux-amd64 -output $(BUILD_DIR)/$(STAGER)-packed-linux-amd64 -goos linux -goarch amd64
 	$(ANVIL) pack -input $(BUILD_DIR)/$(STAGER)-evasion-windows-amd64.exe -output $(BUILD_DIR)/$(STAGER)-packed-windows-amd64.exe -goos windows -goarch amd64
 
-# Build everything: full burrow + stager + evasion + packed
+# Build everything: full burrow (all platforms) + stager + evasion + packed
 build-all:
 	@mkdir -p $(BUILD_DIR)
-	@echo "=== Full burrow ==="
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build \
-		-ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-linux-amd64 .
-	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build \
-		-ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-windows-amd64.exe .
+	@echo "=== Full burrow (all platforms) ==="
+	@for platform in $(PLATFORMS); do \
+		GOOS=$${platform%/*}; \
+		GOARCH=$${platform#*/}; \
+		ext=""; \
+		if [ "$$GOOS" = "windows" ]; then ext=".exe"; fi; \
+		echo "  $$GOOS/$$GOARCH..."; \
+		CGO_ENABLED=0 GOOS=$$GOOS GOARCH=$$GOARCH $(GO) build \
+			-ldflags="$(LDFLAGS)" \
+			-o $(BUILD_DIR)/$(BINARY)-$$GOOS-$$GOARCH$$ext . || exit 1; \
+	done
 	@echo "=== Stager ==="
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build \
 		-ldflags="-s -w" -o $(BUILD_DIR)/$(STAGER)-linux-amd64 ./cmd/stager/
@@ -121,7 +127,10 @@ verify:
 	@fail=0; \
 	for bin in \
 		$(BINARY)-linux-amd64 \
+		$(BINARY)-linux-arm64 \
 		$(BINARY)-windows-amd64.exe \
+		$(BINARY)-darwin-amd64 \
+		$(BINARY)-darwin-arm64 \
 		$(STAGER)-linux-amd64 \
 		$(STAGER)-windows-amd64.exe \
 		$(STAGER)-evasion-linux-amd64 \
@@ -142,7 +151,7 @@ verify:
 		exit 1; \
 	fi; \
 	echo ""
-	@echo "All 8 binaries verified."
+	@echo "All 11 binaries verified."
 
 test:
 	$(GO) test ./...
