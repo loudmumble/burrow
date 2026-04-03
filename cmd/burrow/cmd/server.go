@@ -183,7 +183,11 @@ func runServer(cmd *cobra.Command, _ []string) {
 		// Only print fingerprint to stdout when TUI is not active;
 		// when TUI is active, it is displayed in the dashboard header.
 		if !tuiEnabled {
-			fmt.Fprintf(serverLog, "[*] Fingerprint: %s\n", fingerprint)
+			shortFP := fingerprint
+			if len(fingerprint) > 23 {
+				shortFP = fingerprint[:23] // First 8 bytes: "XX:XX:XX:XX:XX:XX:XX:XX"
+			}
+			fmt.Fprintf(serverLog, "[*] Fingerprint: %s\n", shortFP)
 		}
 
 		tlsCfg = certgen.TLSConfig(tlsCert, "")

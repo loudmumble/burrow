@@ -182,7 +182,7 @@ func dialServer(ctx context.Context, addr string, noTLS bool, fingerprint string
 					return fmt.Errorf("parse peer certificate: %w", err)
 				}
 				actual := certgen.Fingerprint(peerCert)
-				if actual != expected {
+				if !strings.HasPrefix(actual, expected) {
 					return fmt.Errorf("%w: expected %s, got %s",
 						certgen.ErrFingerprintMismatch, expected, actual)
 				}
