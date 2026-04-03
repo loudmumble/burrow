@@ -101,6 +101,7 @@ On startup, the server generates a self-signed Ed25519 TLS certificate and print
 | `--api-token` | | Token for API authentication (auto-generated if empty, only used with --mcp-api) |
 | `--webui` | `0.0.0.0:9090` | Enable WebUI dashboard and optionally set listen address |
 | `--tui` | | Launch interactive TUI dashboard (requires --mcp-api or --webui for session data) |
+| `--log-file` | | Write server logs to the specified file (in addition to stdout/stderr) |
 
 **Examples:**
 
@@ -203,11 +204,13 @@ List all active agent sessions. Queries the REST API. The server must be running
 | `--webui` | `127.0.0.1:9090` | WebUI server address (persistent flag on `session` command) |
 | `--token` | | API authentication token |
 | `--no-tls` | | Use plain HTTP instead of HTTPS (default: use HTTPS) |
+| `--json` | | Output session list as JSON (session list only) |
 
 **Example:**
 
 ```bash
 burrow session list --token <api-token>
+burrow session list --token <api-token> --json
 burrow session list --token <api-token> --webui 127.0.0.1:9090
 burrow session list --token <api-token> --no-tls --webui 127.0.0.1:9090
 ```
@@ -1313,8 +1316,15 @@ burrow server --tui --webui --mcp-api
 |-----|--------|
 | `↑` / `k` | Move cursor up |
 | `↓` / `j` | Move cursor down |
+| `g` / `G` | Jump to top / bottom |
 | `Enter` | Enter session detail view |
-| `t` / `T` | Toggle TUN on/off for selected session |
+| `Ctrl+T` | Toggle TUN on/off for selected session |
+| `y` | Copy session ID to clipboard |
+| `Y` | Copy server fingerprint to clipboard |
+| `l` | Set session label |
+| `E` | Export engagement data (JSON) |
+| `Ctrl+R` | Refresh session list |
+| `?` | Show help overlay |
 | `q` | Quit |
 
 **Keybindings -- Session Detail:**
@@ -1325,10 +1335,24 @@ burrow server --tui --webui --mcp-api
 | `Tab` | Switch between Tunnels and Routes tabs |
 | `↑` / `k` | Move cursor up |
 | `↓` / `j` | Move cursor down |
+| `g` / `G` | Jump to top / bottom |
 | `t` | Open add tunnel form |
 | `r` | Open add route form |
+| `u` | Start selected tunnel (if stopped) |
+| `n` | Stop selected tunnel (if active) |
 | `T` (Shift) | Toggle TUN on/off |
+| `s` | Toggle SOCKS5 proxy on/off |
 | `d` / `Delete` | Delete selected tunnel or route |
+| `x` | Execute command on agent |
+| `w` | Download file from agent |
+| `p` | Upload file to agent |
+| `o` | View exec history |
+| `K` (Shift) | Kill session (tear down all infrastructure) |
+| `P` (Shift) | Tunnel profiles (save/load tunnel sets) |
+| `y` | Copy selected tunnel/route info |
+| `Y` | Copy server fingerprint |
+| `Ctrl+R` | Refresh data |
+| `?` | Show help overlay |
 
 **Keybindings -- Forms (Add Tunnel / Add Route):**
 
@@ -1336,6 +1360,7 @@ burrow server --tui --webui --mcp-api
 |-----|--------|
 | `Tab` / `↓` | Next field |
 | `Shift+Tab` / `↑` | Previous field |
+| `Space` / `←` / `→` | Toggle direction (local/remote) or protocol (tcp/udp) |
 | `Enter` | Submit |
 | `Esc` | Cancel |
 
@@ -1364,6 +1389,15 @@ Max payload: 1 MB. All structured payloads are JSON-encoded.
 | ListenerAck | `0x31` | Agent -> Server | Listener creation result |
 | Ping | `0x40` | Server -> Agent | Keepalive request |
 | Pong | `0x41` | Agent -> Server | Keepalive response |
+| TunStart | `0x50` | Server -> Agent | Activate TUN mode on agent |
+| TunStartAck | `0x51` | Agent -> Server | TUN activation result |
+| TunStop | `0x52` | Server -> Agent | Deactivate TUN mode |
+| ExecRequest | `0x60` | Server -> Agent | Remote command execution |
+| ExecResponse | `0x61` | Agent -> Server | Command output |
+| FileDownloadRequest | `0x70` | Server -> Agent | Download file from agent |
+| FileDownloadResponse | `0x71` | Agent -> Server | File data |
+| FileUploadRequest | `0x72` | Server -> Agent | Upload file to agent |
+| FileUploadResponse | `0x73` | Agent -> Server | Upload confirmation |
 | Error | `0xFF` | Either | Error message |
 
 ---
@@ -1371,7 +1405,7 @@ Max payload: 1 MB. All structured payloads are JSON-encoded.
 ## Testing
 
 ```bash
-~/go1.24/go/bin/go test ./...
+go test ./...
 ```
 
 24 packages, all passing.
@@ -1389,7 +1423,8 @@ Max payload: 1 MB. All structured payloads are JSON-encoded.
 | nhooyr.io/websocket | WebSocket transport |
 | github.com/songgao/water | TUN interface |
 | github.com/nicocha30/gvisor-ligolo | Userspace TCP/IP netstack |
-| Module: github.com/loudmumble/burrow | |
 | github.com/charmbracelet/bubbletea | Terminal UI framework |
 | github.com/charmbracelet/lipgloss | Terminal styling |
 | github.com/charmbracelet/bubbles | UI component library |
+| github.com/miekg/dns | DNS tunnel transport |
+| golang.org/x/net | ICMP transport |
