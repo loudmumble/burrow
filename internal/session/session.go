@@ -450,6 +450,10 @@ func (m *Manager) KillSession(sessionID string) error {
 	for _, cidr := range routeCIDRs {
 		_ = m.RemoveRoute(sessionID, cidr)
 	}
+	// Close the mux session to disconnect the agent.
+	if ac.Mux != nil {
+		ac.Mux.Close()
+	}
 	return nil
 }
 

@@ -151,6 +151,7 @@ func registerAPIRoutes(mux *http.ServeMux, provider SessionProvider, apiToken st
 	mux.HandleFunc("POST /api/sessions/{id}/tunnels/{tid}/start", h.AuthMiddleware(http.HandlerFunc(h.startTunnel)))
 	mux.HandleFunc("POST /api/sessions/{id}/socks5", h.AuthMiddleware(http.HandlerFunc(h.startSOCKS5)))
 	mux.HandleFunc("DELETE /api/sessions/{id}/socks5", h.AuthMiddleware(http.HandlerFunc(h.stopSOCKS5)))
+	mux.HandleFunc("DELETE /api/sessions/{id}", h.AuthMiddleware(http.HandlerFunc(h.killSession)))
 	mux.HandleFunc("POST /api/sessions/{id}/exec", h.AuthMiddleware(http.HandlerFunc(h.execCommand)))
 	mux.HandleFunc("POST /api/sessions/{id}/download", h.AuthMiddleware(http.HandlerFunc(h.downloadFile)))
 	mux.HandleFunc("POST /api/sessions/{id}/upload", h.AuthMiddleware(http.HandlerFunc(h.uploadFile)))
@@ -297,6 +298,15 @@ func (h *apiHandler) startTunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "started", "id": tunnelID})
+}
+
+func (h *apiHandler) killSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := h.provider.KillSession(id); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *apiHandler) startSOCKS5(w http.ResponseWriter, r *http.Request) {
