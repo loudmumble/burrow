@@ -972,8 +972,11 @@ func (m *Manager) StopTun(sessionID string) error {
 		if ac.Ctrl != nil {
 			stopMsg := protocol.EncodeTunStop()
 			ac.writeMu.Lock()
-			protocol.WriteMessage(ac.Ctrl, stopMsg)
+			err := protocol.WriteMessage(ac.Ctrl, stopMsg)
 			ac.writeMu.Unlock()
+			if err != nil {
+				return fmt.Errorf("send TUN stop to agent: %w", err)
+			}
 		}
 	}
 
@@ -1156,12 +1159,22 @@ func (m *Manager) tunRelayToStream(ctx context.Context, iface *tun.Interface, ac
 
 // tunRelayFromStream reads packets from the data stream and writes them to the TUN interface.
 func (m *Manager) tunRelayFromStream(ctx context.Context, iface *tun.Interface, ac *AgentConn) {
-	ac.mu.RLock()
-	stream := ac.tunStream
-	ac.mu.RUnlock()
-	if stream == nil {
-		fmt.Fprintln(os.Stderr, "[!] TUN relay: no data stream")
-		return
+	// Wait for stream to become available (matches tunRelayToStream behavior)
+	var stream net.Conn
+	for stream == nil {
+		if ctx.Err() != nil {
+			return
+		}
+		ac.mu.RLock()
+		stream = ac.tunStream
+		ac.mu.RUnlock()
+		if stream == nil {
+			select {
+			case <-time.After(50 * time.Millisecond):
+			case <-ctx.Done():
+				return
+			}
+		}
 	}
 	for {
 		if ctx.Err() != nil {

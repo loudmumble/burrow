@@ -198,7 +198,11 @@ func (h *apiHandler) addTunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tunnel, err := h.provider.AddTunnel(id, req.Direction, req.Listen, req.Remote, req.Protocol)
+	proto := req.Protocol
+	if proto == "" {
+		proto = "tcp"
+	}
+	tunnel, err := h.provider.AddTunnel(id, req.Direction, req.Listen, req.Remote, proto)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

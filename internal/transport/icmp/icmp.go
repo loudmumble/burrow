@@ -105,6 +105,15 @@ func (t *ICMPTransport) Listen(_ context.Context, addr string, _ *tls.Config) er
 // and delivers data to the appropriate session.
 func (t *ICMPTransport) recvLoop() {
 	buf := make([]byte, 65535)
+
+	// Copy listener reference under lock to avoid racing with Close().
+	t.mu.Lock()
+	pc := t.listener
+	t.mu.Unlock()
+	if pc == nil {
+		return
+	}
+
 	for {
 		select {
 		case <-t.done:
@@ -112,7 +121,7 @@ func (t *ICMPTransport) recvLoop() {
 		default:
 		}
 
-		if err := t.listener.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+		if err := pc.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
 			select {
 			case <-t.done:
 			default:
@@ -120,7 +129,7 @@ func (t *ICMPTransport) recvLoop() {
 			return
 		}
 
-		n, raddr, err := t.listener.ReadFrom(buf)
+		n, raddr, err := pc.ReadFrom(buf)
 		if err != nil {
 			if isTimeout(err) {
 				continue
@@ -153,25 +162,35 @@ func (t *ICMPTransport) recvLoop() {
 			t.mu.Unlock()
 			continue
 		}
+		isNew := false
 		if !exists {
-			sess = newICMPConn(t.listener, raddr, echo.ID, false)
+			sess = newICMPConn(pc, raddr, echo.ID, false)
+			sessionKey := key
+			sess.onClose = func() {
+				t.mu.Lock()
+				delete(t.sessions, sessionKey)
+				t.mu.Unlock()
+			}
 			t.sessions[key] = sess
-			t.mu.Unlock()
+			isNew = true
+		}
+		// Deliver while we still hold the reference (sess can't be removed
+		// from the map while we hold the lock, but deliver/deliverFIN only
+		// touch the session's internal buffer which has its own locking).
+		if flag == flagFIN {
+			sess.deliverFIN()
+		} else {
+			sess.deliver(payload)
+		}
+		t.mu.Unlock()
 
+		if isNew {
 			select {
 			case t.connCh <- sess:
 			case <-t.done:
 				sess.Close()
 				return
 			}
-		} else {
-			t.mu.Unlock()
-		}
-
-		if flag == flagFIN {
-			sess.deliverFIN()
-		} else {
-			sess.deliver(payload)
 		}
 	}
 }
@@ -260,6 +279,7 @@ type icmpConn struct {
 	remote    net.Addr
 	sessionID int
 	ownsPC    bool // true = client side (close PC on Close)
+	onClose   func() // called on close to remove from transport session map
 
 	mu      sync.Mutex
 	cond    *sync.Cond
@@ -491,6 +511,10 @@ func (c *icmpConn) Close() error {
 		c.deadlineMu.Unlock()
 
 		close(c.done)
+
+		if c.onClose != nil {
+			c.onClose()
+		}
 
 		if c.ownsPC {
 			err = c.pc.Close()

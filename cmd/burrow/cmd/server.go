@@ -596,8 +596,9 @@ func handleRemoteTunnelStream(stream net.Conn) {
 	}()
 	go func() {
 		relay.CopyBuffered(stream, conn)
+		// Target closed — close stream to signal EOF to agent
+		stream.Close()
 		done <- struct{}{}
 	}()
 	<-done
-	<-done // Wait for both goroutines to finish
 }

@@ -145,6 +145,24 @@ func dialServer(ctx context.Context, addr, fingerprint string, noTLS bool, trans
 		tlsCfg = buildClientTLSConfig(fingerprint)
 	}
 
+	// Auto-prefix ws:// or wss:// for WebSocket transport if not present
+	if transportName == "ws" && !strings.HasPrefix(addr, "ws://") && !strings.HasPrefix(addr, "wss://") {
+		if noTLS {
+			addr = "ws://" + addr
+		} else {
+			addr = "wss://" + addr
+		}
+	}
+
+	// Auto-prefix http:// or https:// for HTTP transport if not present
+	if transportName == "http" && !strings.HasPrefix(addr, "http://") && !strings.HasPrefix(addr, "https://") {
+		if noTLS {
+			addr = "http://" + addr
+		} else {
+			addr = "https://" + addr
+		}
+	}
+
 	newTransport, ok := transport.Registry[transportName]
 	if !ok {
 		return nil, fmt.Errorf("unknown transport: %s", transportName)
@@ -332,7 +350,11 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 
 				case "remote", "reverse":
 					// Remote tunnel: agent listens, forwards connections through yamux back to server
-					ln, listenErr := net.Listen(req.Protocol, req.ListenAddr)
+					listenProto := req.Protocol
+					if listenProto == "" {
+						listenProto = "tcp"
+					}
+					ln, listenErr := net.Listen(listenProto, req.ListenAddr)
 					ackPayload := &protocol.TunnelAckPayload{ID: req.ID}
 					if listenErr != nil {
 						ackPayload.Error = listenErr.Error()
@@ -458,7 +480,12 @@ func commandLoop(ctx context.Context, ctrl net.Conn, sess *mux.Session) error {
 					fmt.Fprintf(os.Stderr, "[!] TUN data stream failed: %v\n", streamErr)
 					continue
 				}
-				dataStream.Write([]byte{0x01}) // Stream type: TUN data
+				if _, writeErr := dataStream.Write([]byte{0x01}); writeErr != nil {
+					dataStream.Close()
+					ns.Close()
+					fmt.Fprintf(os.Stderr, "[!] TUN stream type write failed: %v\n", writeErr)
+					continue
+				}
 				tunNS = ns
 				tunStream = dataStream
 				tunCtx, cancel := context.WithCancel(ctx)
@@ -740,17 +767,19 @@ func remoteTunnelRelay(conn net.Conn, sess *mux.Session, remoteAddr string) {
 	done := make(chan struct{}, 2)
 	go func() {
 		relay.CopyBuffered(stream, conn)
-		done <- struct{}{}
-	}()
-	go func() {
-		relay.CopyBuffered(conn, stream)
+		// Stream EOF — close conn write side to signal client
 		if tc, ok := conn.(*net.TCPConn); ok {
 			tc.CloseWrite()
 		}
 		done <- struct{}{}
 	}()
+	go func() {
+		relay.CopyBuffered(conn, stream)
+		// Client closed — close stream to signal server
+		stream.Close()
+		done <- struct{}{}
+	}()
 	<-done
-	<-done // Wait for both goroutines
 }
 
 // acceptProxyStreams accepts server-initiated yamux streams for SOCKS5 proxy
@@ -809,8 +838,9 @@ func handleProxyStream(_ context.Context, stream net.Conn) {
 	}()
 	go func() {
 		relay.CopyBuffered(stream, conn)
+		// Target closed — close stream to signal EOF to server
+		stream.Close()
 		done <- struct{}{}
 	}()
-	<-done
 	<-done
 }
