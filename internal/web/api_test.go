@@ -152,9 +152,11 @@ func (m *mockProvider) RemoveRoute(sessionID, cidr string) error {
 func (m *mockProvider) StartTun(sessionID string) error  { return nil }
 func (m *mockProvider) StopTun(sessionID string) error   { return nil }
 func (m *mockProvider) IsTunActive(sessionID string) bool { return false }
-func (m *mockProvider) IsSOCKS5Active(sessionID string) bool { return false }
-func (m *mockProvider) SOCKS5Addr(sessionID string) string     { return "127.0.0.1:1080" }
-func (m *mockProvider) KillSession(sessionID string) error     { return nil }
+func (m *mockProvider) IsSOCKS5Active(sessionID string) bool           { return false }
+func (m *mockProvider) SOCKS5Addr(sessionID string) string             { return "127.0.0.1:1080" }
+func (m *mockProvider) StartSOCKS5(sessionID, listenAddr string) error { return nil }
+func (m *mockProvider) StopSOCKS5(sessionID string) error              { return nil }
+func (m *mockProvider) KillSession(sessionID string) error             { return nil }
 func (m *mockProvider) ExecCommand(sessionID, command string) (string, error) {
 	return "mock exec output", nil
 }

@@ -70,6 +70,8 @@ type SessionProvider interface {
 	IsTunActive(sessionID string) bool
 	IsSOCKS5Active(sessionID string) bool
 	SOCKS5Addr(sessionID string) string
+	StartSOCKS5(sessionID, listenAddr string) error
+	StopSOCKS5(sessionID string) error
 	KillSession(sessionID string) error
 	ExecCommand(sessionID, command string) (string, error)
 	DownloadFile(sessionID, filePath string) (*protocol.FileDownloadResponsePayload, error)
@@ -147,6 +149,8 @@ func registerAPIRoutes(mux *http.ServeMux, provider SessionProvider, apiToken st
 	mux.HandleFunc("DELETE /api/sessions/{id}/tun", h.AuthMiddleware(http.HandlerFunc(h.stopTun)))
 	mux.HandleFunc("POST /api/sessions/{id}/tunnels/{tid}/stop", h.AuthMiddleware(http.HandlerFunc(h.stopTunnel)))
 	mux.HandleFunc("POST /api/sessions/{id}/tunnels/{tid}/start", h.AuthMiddleware(http.HandlerFunc(h.startTunnel)))
+	mux.HandleFunc("POST /api/sessions/{id}/socks5", h.AuthMiddleware(http.HandlerFunc(h.startSOCKS5)))
+	mux.HandleFunc("DELETE /api/sessions/{id}/socks5", h.AuthMiddleware(http.HandlerFunc(h.stopSOCKS5)))
 	mux.HandleFunc("POST /api/sessions/{id}/exec", h.AuthMiddleware(http.HandlerFunc(h.execCommand)))
 	mux.HandleFunc("POST /api/sessions/{id}/download", h.AuthMiddleware(http.HandlerFunc(h.downloadFile)))
 	mux.HandleFunc("POST /api/sessions/{id}/upload", h.AuthMiddleware(http.HandlerFunc(h.uploadFile)))
@@ -293,6 +297,39 @@ func (h *apiHandler) startTunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "started", "id": tunnelID})
+}
+
+func (h *apiHandler) startSOCKS5(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	var req struct {
+		Listen string `json:"listen"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.Listen == "" {
+		req.Listen = "127.0.0.1:1080"
+	}
+
+	if err := h.provider.StartSOCKS5(id, req.Listen); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status": "active",
+		"listen": req.Listen,
+	})
+}
+
+func (h *apiHandler) stopSOCKS5(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := h.provider.StopSOCKS5(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
 }
 
 func (h *apiHandler) execCommand(w http.ResponseWriter, r *http.Request) {
