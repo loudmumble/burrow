@@ -90,7 +90,8 @@ build-stager-packed: build-stager-evasion
 	$(ANVIL) pack -input $(BUILD_DIR)/$(STAGER)-evasion-linux-amd64 -output $(BUILD_DIR)/$(STAGER)-packed-linux-amd64 -goos linux -goarch amd64
 	$(ANVIL) pack -input $(BUILD_DIR)/$(STAGER)-evasion-windows-amd64.exe -output $(BUILD_DIR)/$(STAGER)-packed-windows-amd64.exe -goos windows -goarch amd64
 
-# Build everything: full burrow (all platforms) + stager + evasion + packed
+# Build everything: full burrow (all platforms) + stager
+# Evasion/packed stagers require the anvil toolkit (optional)
 build-all:
 	@mkdir -p $(BUILD_DIR)
 	@echo "=== Full burrow (all platforms) ==="
@@ -109,10 +110,14 @@ build-all:
 		-ldflags="-s -w" -o $(BUILD_DIR)/$(STAGER)-linux-amd64 ./cmd/stager/
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build \
 		-ldflags="-s -w" -o $(BUILD_DIR)/$(STAGER)-windows-amd64.exe ./cmd/stager/
-	$(MAKE) --no-print-directory build-stager-packed
+	@if [ -d $(ANVIL_DIR) ]; then \
+		echo "=== Evasion + Packed (anvil found) ==="; \
+		$(MAKE) --no-print-directory build-stager-packed; \
+	else \
+		echo "=== Skipping evasion/packed stagers (anvil not found) ==="; \
+	fi
 	@echo "=== Done ==="
 	$(MAKE) --no-print-directory sizes
-	$(MAKE) --no-print-directory verify
 
 # Print binary sizes
 sizes:
@@ -124,7 +129,7 @@ sizes:
 verify:
 	@echo ""
 	@echo "Verifying binaries..."
-	@fail=0; \
+	@fail=0; count=0; \
 	for bin in \
 		$(BINARY)-linux-amd64 \
 		$(BINARY)-linux-arm64 \
@@ -132,7 +137,17 @@ verify:
 		$(BINARY)-darwin-amd64 \
 		$(BINARY)-darwin-arm64 \
 		$(STAGER)-linux-amd64 \
-		$(STAGER)-windows-amd64.exe \
+		$(STAGER)-windows-amd64.exe; \
+	do \
+		if [ -f $(BUILD_DIR)/$$bin ]; then \
+			echo "  OK  $$bin"; \
+			count=$$((count+1)); \
+		else \
+			echo "  FAIL  $$bin  (MISSING)"; \
+			fail=1; \
+		fi; \
+	done; \
+	for bin in \
 		$(STAGER)-evasion-linux-amd64 \
 		$(STAGER)-evasion-windows-amd64.exe \
 		$(STAGER)-packed-linux-amd64 \
@@ -140,18 +155,18 @@ verify:
 	do \
 		if [ -f $(BUILD_DIR)/$$bin ]; then \
 			echo "  OK  $$bin"; \
+			count=$$((count+1)); \
 		else \
-			echo "  FAIL  $$bin  (MISSING)"; \
-			fail=1; \
+			echo "  --  $$bin  (skipped, requires anvil)"; \
 		fi; \
 	done; \
 	if [ $$fail -eq 1 ]; then \
 		echo ""; \
-		echo "ERROR: some binaries are missing. Check build output above."; \
+		echo "ERROR: some required binaries are missing."; \
 		exit 1; \
 	fi; \
-	echo ""
-	@echo "All 11 binaries verified."
+	echo ""; \
+	echo "$$count binaries verified."
 
 test:
 	$(GO) test ./...
