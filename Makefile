@@ -59,7 +59,7 @@ check-anvil:
 	@if [ ! -d $(ANVIL_DIR) ]; then \
 		echo "ERROR: anvil directory not found at $(ANVIL_DIR)"; \
 		echo "  Clone anvil next to burrow:"; \
-		echo "    cd .. && git clone ssh://git@gitlab.loudmumble.com:2424/loudmumble/anvil.git"; \
+		echo "    Clone the anvil toolkit into ../anvil"; \
 		exit 1; \
 	fi
 
