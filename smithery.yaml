@@ -1,0 +1,7 @@
+startCommand:
+  type: stdio
+  configSchema: {}
+  commandFunction:
+    - python3
+    - -m
+    - burrow.mcp_server
