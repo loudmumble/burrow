@@ -780,6 +780,7 @@ func remoteTunnelRelay(conn net.Conn, sess *mux.Session, remoteAddr string) {
 		done <- struct{}{}
 	}()
 	<-done
+	<-done
 }
 
 // acceptProxyStreams accepts server-initiated yamux streams for SOCKS5 proxy
@@ -842,5 +843,6 @@ func handleProxyStream(_ context.Context, stream net.Conn) {
 		stream.Close()
 		done <- struct{}{}
 	}()
+	<-done
 	<-done
 }

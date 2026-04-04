@@ -601,4 +601,5 @@ func handleRemoteTunnelStream(stream net.Conn) {
 		done <- struct{}{}
 	}()
 	<-done
+	<-done
 }

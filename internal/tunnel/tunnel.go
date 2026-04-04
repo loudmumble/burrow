@@ -461,4 +461,5 @@ func relayConns(a, b net.Conn, bytesAB, bytesBA *atomic.Int64) {
 	go cp(a, b, bytesBA)
 
 	<-done
+	<-done
 }

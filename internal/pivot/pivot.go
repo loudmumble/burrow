@@ -367,6 +367,7 @@ func (c *Chain) relayThrough(ctx context.Context, local net.Conn) {
 	go cp(remote, local)
 	go cp(local, remote)
 	<-done
+	<-done
 }
 
 // Route returns a human-readable route string.
