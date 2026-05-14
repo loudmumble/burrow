@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BURROW // Operator Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="/static/pico.min.css">
+  <script defer src="/static/alpine.min.js"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="app-layout" x-data="dashboard()" x-init="init()">
+
+  <!-- ═══ HEADER ══════════════════════════════════════════════════════════ -->
+  <header class="app-header">
+    <div class="header-brand">
+      <span class="brand-glyph">◈</span>
+      BURROW
+    </div>
+    <div class="header-meta">
+      <div class="meta-item">
+        <span class="agent-count-badge"
+              x-text="sessions.length + ' AGENT' + (sessions.length !== 1 ? 'S' : '')"></span>
+      </div>
+      <div class="meta-item">
+        <span class="status-dot" :class="connected ? 'active pulse' : 'inactive'"></span>
+        <span x-text="connected ? 'SSE LIVE' : 'SSE DOWN'"></span>
+      </div>
+      <div class="meta-item">
+        <span x-show="token"  class="token-ok">● AUTH OK</span>
+        <span x-show="!token" class="token-missing">✕ NO TOKEN</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══ ERROR BANNER ════════════════════════════════════════════════════ -->
+  <div class="error-banner" x-show="errorMessage" x-cloak>
+    <span class="error-banner-icon">⚠</span>
+    <span class="error-banner-text" x-text="errorMessage"></span>
+    <button class="error-dismiss" @click="dismissError()">Dismiss</button>
+  </div>
+
+  <!-- ═══ APP BODY ════════════════════════════════════════════════════════ -->
+  <div class="app-body">
+
+    <!-- ── LEFT: Session sidebar ──────────────────────────────────────── -->
+    <aside class="session-panel">
+      <div class="panel-heading">// Active Sessions</div>
+      <div class="session-list">
+
+        <template x-for="s in sessions" :key="s.id">
+          <div class="session-item"
+               @click="selectSession(s.id)"
+               :class="{'is-selected': selected === s.id}">
+            <div class="session-item-header">
+              <span class="status-dot" :class="s.active ? 'active' : 'inactive'"></span>
+              <span class="session-os" x-text="osIcon(s.os)"></span>
+              <span class="session-hostname" x-text="s.hostname"></span>
+            </div>
+            <div class="session-ips" x-text="(s.ips || []).join(' · ')"></div>
+            <div class="session-meta">
+              <span class="session-stat">
+                <span class="session-stat-label">TUN </span><span class="session-stat-value" x-text="s.tunnel_count"></span>
+              </span>
+              <span class="session-stat">
+                <span class="session-stat-label">RTE </span><span class="session-stat-value" x-text="s.route_count"></span>
+              </span>
+              <span class="session-stat" x-text="timeAgo(s.created_at)"></span>
+            </div>
+            <div class="session-bytes">
+              <span class="bytes-in"  x-text="formatBytes(s.bytes_in)"></span>
+              <span class="bytes-out" x-text="formatBytes(s.bytes_out)"></span>
+            </div>
+          </div>
+        </template>
+
+        <div class="session-empty" x-show="sessions.length === 0">
+          No sessions active
+        </div>
+
+      </div>
+    </aside>
+
+    <!-- ── RIGHT: Detail panel (session selected) ─────────────────────── -->
+    <div class="detail-panel" x-show="selected" x-cloak>
+
+      <!-- Session header -->
+      <div class="session-header">
+        <div class="session-title-row">
+          <span class="status-dot"
+                :class="selectedSessionData && selectedSessionData.active ? 'active' : 'inactive'"></span>
+          <span class="session-os-lg"
+                x-text="osIcon(selectedSessionData ? selectedSessionData.os : '')"></span>
+          <span class="session-title-hostname"
+                x-text="selectedSessionData ? selectedSessionData.hostname : ''"></span>
+        </div>
+        <div class="session-detail-grid">
+          <div class="detail-item">
+            <span class="detail-label">Session ID</span>
+            <div class="session-id-row">
+              <span class="detail-value"
+                    x-text="truncateId(selectedSessionData ? selectedSessionData.id : '')"></span>
+              <button class="copy-btn"
+                      @click="copyToClipboard(selectedSessionData ? selectedSessionData.id : '')"
+                      title="Copy full session ID">COPY</button>
+            </div>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">Operating System</span>
+            <span class="detail-value"
+                  x-text="selectedSessionData ? selectedSessionData.os : ''"></span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">IP Addresses</span>
+            <span class="detail-value"
+                  x-text="selectedSessionData ? (selectedSessionData.ips || []).join(', ') : ''"></span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">Connected</span>
+            <span class="detail-value"
+                  x-text="selectedSessionData ? timeAgo(selectedSessionData.created_at) : ''"></span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">Bytes In</span>
+            <span class="detail-value ok"
+                  x-text="selectedSessionData ? formatBytes(selectedSessionData.bytes_in) : ''"></span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">Bytes Out</span>
+            <span class="detail-value accent"
+                  x-text="selectedSessionData ? formatBytes(selectedSessionData.bytes_out) : ''"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Tunnels section ─────────────────────────────────────────── -->
+      <div class="section">
+        <div class="section-heading">
+          <span class="section-title">// Tunnels</span>
+          <span class="section-count" x-text="tunnels.length"></span>
+        </div>
+
+        <table class="data-table" x-show="tunnels.length > 0">
+          <thead>
+            <tr>
+              <th>Direction</th>
+              <th>Listen Addr</th>
+              <th>Remote Addr</th>
+              <th>Proto</th>
+              <th class="col-status">Status</th>
+              <th></th>
+            </tr>
+          <tbody>
+            <template x-for="t in tunnels" :key="t.id">
+              <tr>
+                <td><span :class="directionBadgeClass(t.direction)" x-text="t.direction"></span></td>
+                <td x-text="t.listen_addr"></td>
+                <td x-text="t.remote_addr"></td>
+                <td><span :class="protoBadgeClass(t.protocol)" x-text="t.protocol"></span></td>
+                <td>
+                  <span :class="t.active ? 'badge badge-active' : (t.error ? 'badge badge-error' : 'badge badge-inactive')"
+                        x-text="t.active ? 'ACTIVE' : (t.error ? 'ERROR' : 'STOPPED')"></span>
+                  <span class="tunnel-error" x-show="t.error" x-text="t.error"></span>
+                </td>
+                <td class="col-action">
+                  <button class="btn btn-toggle"
+                          @click="t.active ? stopTunnel(t.id) : startTunnel(t.id)"
+                          :title="t.active ? 'Stop tunnel' : 'Start tunnel'"
+                          x-text="t.active ? '⏸' : '▶'"></button>
+                  <button class="btn btn-danger"
+                          @click="removeTunnel(t.id)"
+                          title="Remove tunnel">🗑</button>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+
+        <div class="table-empty" x-show="tunnels.length === 0">
+          No tunnels configured
+        </div>
+
+        <!-- Add tunnel form -->
+        <form @submit.prevent="addTunnel()">
+          <div class="form-row">
+            <select x-model="newTunnel.direction" class="select-sm">
+              <option value="local">local</option>
+              <option value="remote">remote</option>
+              <option value="reverse">reverse</option>
+            </select>
+            <input type="text" placeholder="0.0.0.0:8080" x-model="newTunnel.listen">
+            <input type="text" placeholder="10.0.0.1:80"  x-model="newTunnel.remote">
+            <select x-model="newTunnel.protocol" class="select-sm">
+              <option value="tcp">tcp</option>
+              <option value="udp">udp</option>
+            </select>
+            <button type="submit" class="btn btn-primary">+ ADD</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- ── Routes section ─────────────────────────────────────────── -->
+      <div class="section">
+        <div class="section-heading">
+          <span class="section-title">// Routes</span>
+          <span class="section-count" x-text="routes.length"></span>
+        </div>
+
+        <table class="data-table" x-show="routes.length > 0">
+          <thead>
+            <tr>
+              <th>CIDR</th>
+              <th class="col-status">Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="rt in routes" :key="rt.cidr">
+              <tr>
+                <td x-text="rt.cidr"></td>
+                <td>
+                  <span :class="rt.active ? 'badge badge-active' : 'badge badge-inactive'"
+                        x-text="rt.active ? 'ACTIVE' : 'INACTIVE'"></span>
+                </td>
+                <td class="col-action">
+                  <button class="btn btn-danger"
+                          @click="removeRoute(rt.cidr)"
+                          title="Remove route">🗑</button>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+
+        <div class="table-empty" x-show="routes.length === 0">
+          No routes configured
+        </div>
+
+        <!-- Add route form -->
+        <form @submit.prevent="addRoute()">
+          <div class="form-row">
+            <input type="text" placeholder="10.0.0.0/24" x-model="newRoute.cidr">
+            <button type="submit" class="btn btn-primary">+ ADD</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- ── TUN Interface section ───────────────────────────────────── -->
+      <div class="section">
+        <div class="section-heading">
+          <span class="section-title">// TUN Interface</span>
+          <span class="section-count"
+                :class="selectedSessionData && selectedSessionData.tun_active ? 'count-active' : ''"
+                x-text="selectedSessionData && selectedSessionData.tun_active ? 'ON' : 'OFF'"></span>
+        </div>
+        <div class="tun-controls">
+          <div class="tun-status-row">
+            <span class="status-dot"
+                  :class="selectedSessionData && selectedSessionData.tun_active ? 'active' : 'inactive'"></span>
+            <span class="tun-status-text"
+                  x-text="selectedSessionData && selectedSessionData.tun_active ? 'TUN active — transparent routing via burrow0' : 'TUN inactive — start to enable transparent pivoting'"></span>
+          </div>
+          <div class="tun-btn-row">
+            <button class="btn btn-primary"
+                    x-show="!(selectedSessionData && selectedSessionData.tun_active)"
+                    @click="startTun()"
+                    :disabled="tunLoading">▶ START TUN</button>
+            <button class="btn btn-stop"
+                    x-show="selectedSessionData && selectedSessionData.tun_active"
+                    @click="stopTun()"
+                    :disabled="tunLoading">⏹ STOP TUN</button>
+            <span class="tun-hint" x-show="!(selectedSessionData && selectedSessionData.tun_active)">Requires root on server. Add routes after starting.</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Command Execution section ───────────────────────────────── -->
+      <div class="section">
+        <div class="section-heading">
+          <span class="section-title">// Execute Command</span>
+        </div>
+        <form @submit.prevent="execCommand()">
+          <div class="form-row">
+            <input type="text"
+                   placeholder="whoami, dir C:\, cat /etc/hostname ..."
+                   x-model="execInput"
+                   :disabled="execLoading"
+                   @keydown.enter.prevent="execCommand()">
+            <button type="submit" class="btn btn-primary" :disabled="execLoading">
+              <span x-show="!execLoading">▶ RUN</span>
+              <span x-show="execLoading">…</span>
+            </button>
+          </div>
+        </form>
+        <div class="exec-output" x-show="execOutput !== null">
+          <div class="exec-output-header">
+            <span class="exec-output-label">OUTPUT</span>
+            <button class="copy-btn" @click="copyToClipboard(execOutput || '')" title="Copy output">COPY</button>
+          </div>
+          <pre class="exec-output-pre" x-text="execOutput"></pre>
+          <div class="exec-output-error" x-show="execError" x-text="execError"></div>
+        </div>
+      </div>
+
+      <!-- ── File Operations section ─────────────────────────────────── -->
+      <div class="section">
+        <div class="section-heading">
+          <span class="section-title">// File Operations</span>
+        </div>
+
+        <div class="file-ops-grid">
+          <!-- Download -->
+          <div class="file-op-block">
+            <div class="file-op-label">Download from target</div>
+            <form @submit.prevent="downloadFile()">
+              <div class="form-row">
+                <input type="text"
+                       placeholder="/etc/passwd, C:\Users\..."
+                       x-model="downloadPath"
+                       :disabled="downloadLoading">
+                <button type="submit" class="btn btn-primary" :disabled="downloadLoading">
+                  <span x-show="!downloadLoading">↓ GET</span>
+                  <span x-show="downloadLoading">…</span>
+                </button>
+              </div>
+            </form>
+            <div class="file-result" x-show="downloadResult">
+              <div class="exec-output-header">
+                <span class="exec-output-label" x-text="downloadFileName || 'DOWNLOAD'"></span>
+                <span class="file-size" x-text="downloadSize"></span>
+                <button class="copy-btn" @click="saveDownload()" title="Save to disk">SAVE</button>
+              </div>
+              <div class="exec-output-error" x-show="downloadError" x-text="downloadError"></div>
+            </div>
+          </div>
+
+          <!-- Upload -->
+          <div class="file-op-block">
+            <div class="file-op-label">Upload to target</div>
+            <form @submit.prevent="uploadFile()">
+              <div class="form-row">
+                <input type="text"
+                       placeholder="Remote path: /tmp/payload.bin"
+                       x-model="uploadPath"
+                       :disabled="uploadLoading">
+                <label class="btn" :class="uploadFileData ? 'btn-primary' : ''"
+                       :style="uploadLoading ? 'pointer-events:none;opacity:0.5' : ''">
+                  <span x-text="uploadFileName || '📎 FILE'"></span>
+                  <input type="file" style="display:none"
+                         @change="handleFileSelect($event)"
+                         :disabled="uploadLoading">
+                </label>
+                <button type="submit" class="btn btn-primary" :disabled="uploadLoading || !uploadFileData">
+                  <span x-show="!uploadLoading">↑ PUT</span>
+                  <span x-show="uploadLoading">…</span>
+                </button>
+              </div>
+            </form>
+            <div class="exec-output-error" x-show="uploadError" x-text="uploadError"></div>
+            <div class="file-success" x-show="uploadSuccess" x-text="uploadSuccess"></div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /detail-panel -->
+
+    <!-- ── RIGHT: Empty state (no session selected) ───────────────────── -->
+    <div class="detail-panel detail-empty" x-show="!selected">
+      <div class="empty-glyph">◈</div>
+      <div class="empty-text">Select a session to begin</div>
+    </div>
+
+  </div><!-- /app-body -->
+
+</div><!-- /app-layout -->
+
+<script src="/static/app.js"></script>
+</body>
+</html>
