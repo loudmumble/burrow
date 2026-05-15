@@ -18,3 +18,9 @@ node_modules/
 tools/bin/
 cmd/stager/_build/
 .anvil/
+.claude/
+.opencode/
+.sisyphus/
+CLAUDE.md
+MANUALTESTING.md
+VERIFICATION_LEDGER.md
