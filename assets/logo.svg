@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <defs>
+    <linearGradient id="tunnelGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#1e1e2e;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#313244;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1e1e2e;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="burrowGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#a6e3a1;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1e1e2e;stop-opacity:1" />
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Background -->
+  <circle cx="200" cy="200" r="180" fill="#181825" stroke="#313244" stroke-width="2"/>
+  
+  <!-- Tunnel entrances (multiple) -->
+  <g fill="url(#tunnelGrad)" stroke="#a6e3a1" stroke-width="2">
+    <!-- Main tunnel -->
+    <ellipse cx="200" cy="200" rx="80" ry="100" fill="none" stroke="#a6e3a1" stroke-width="3"/>
+    <ellipse cx="200" cy="200" rx="60" ry="80" fill="none" stroke="#a6e3a1" stroke-width="2" opacity="0.7"/>
+    <ellipse cx="200" cy="200" rx="40" ry="60" fill="none" stroke="#a6e3a1" stroke-width="1.5" opacity="0.5"/>
+    <ellipse cx="200" cy="200" rx="20" ry="40" fill="none" stroke="#a6e3a1" stroke-width="1" opacity="0.3"/>
+  </g>
+  
+  <!-- Network nodes (representing pivoting) -->
+  <g fill="#f9e2af" filter="url(#glow)">
+    <circle cx="100" cy="150" r="8"/>
+    <circle cx="300" cy="150" r="8"/>
+    <circle cx="100" cy="250" r="8"/>
+    <circle cx="300" cy="250" r="8"/>
+    <circle cx="200" cy="100" r="6"/>
+    <circle cx="200" cy="300" r="6"/>
+  </g>
+  
+  <!-- Connection lines -->
+  <g stroke="#a6e3a1" stroke-width="1.5" opacity="0.6">
+    <line x1="100" y1="150" x2="200" y2="200"/>
+    <line x1="300" y1="150" x2="200" y2="200"/>
+    <line x1="100" y1="250" x2="200" y2="200"/>
+    <line x1="300" y1="250" x2="200" y2="200"/>
+    <line x1="200" y1="100" x2="200" y2="200"/>
+    <line x1="200" y1="300" x2="200" y2="200"/>
+  </g>
+  
+  <!-- Data flow arrows -->
+  <g fill="#f38ba8" opacity="0.8">
+    <polygon points="150,175 160,170 160,180"/>
+    <polygon points="250,175 240,170 240,180"/>
+    <polygon points="150,225 160,220 160,230"/>
+    <polygon points="250,225 240,220 240,230"/>
+  </g>
+  
+  <!-- Burrowing worm/mascot -->
+  <g transform="translate(200, 200)">
+    <ellipse rx="15" ry="25" fill="#a6e3a1" opacity="0.9"/>
+    <circle cx="0" cy="-20" r="12" fill="#a6e3a1"/>
+    <circle cx="-4" cy="-22" r="2" fill="#1e1e2e"/>
+    <circle cx="4" cy="-22" r="2" fill="#1e1e2e"/>
+  </g>
+  
+  <!-- Text: BURROW -->
+  <text x="200" y="360" text-anchor="middle" fill="#a6e3a1" font-family="monospace" font-size="32" font-weight="bold" letter-spacing="4">BURROW</text>
+  
+  <!-- Subtitle -->
+  <text x="200" y="385" text-anchor="middle" fill="#6c7086" font-family="monospace" font-size="10" letter-spacing="2">NETWORK PIVOTING</text>
+</svg>

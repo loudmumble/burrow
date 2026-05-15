@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <defs>
+    <linearGradient id="earthGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#a6e3a1;stop-opacity:0.3" />
+      <stop offset="100%" style="stop-color:#1e1e2e;stop-opacity:1" />
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Underground layers -->
+  <rect width="400" height="400" fill="#11111b"/>
+  <rect x="0" y="200" width="400" height="200" fill="url(#earthGrad)"/>
+  
+  <!-- Soil layers -->
+  <g opacity="0.3">
+    <rect x="0" y="220" width="400" height="2" fill="#45475a"/>
+    <rect x="0" y="260" width="400" height="1" fill="#313244"/>
+    <rect x="0" y="300" width="400" height="3" fill="#45475a"/>
+    <rect x="0" y="350" width="400" height="1" fill="#313244"/>
+  </g>
+  
+  <!-- Tunnel network (organic, worm-like) -->
+  <g stroke="#a6e3a1" stroke-width="4" fill="none" stroke-linecap="round" filter="url(#glow)">
+    <path d="M50 250 Q100 240 150 260 Q200 280 250 260 Q300 240 350 250">
+      <animate attributeName="stroke-opacity" values="0.4;0.8;0.4" dur="3s" repeatCount="indefinite"/>
+    </path>
+    <path d="M80 300 Q130 290 180 310 Q230 330 280 310 Q330 290 380 300">
+      <animate attributeName="stroke-opacity" values="0.3;0.7;0.3" dur="4s" repeatCount="indefinite"/>
+    </path>
+    <path d="M30 350 Q80 340 130 360 Q180 380 230 360 Q280 340 330 350">
+      <animate attributeName="stroke-opacity" values="0.2;0.6;0.2" dur="5s" repeatCount="indefinite"/>
+    </path>
+  </g>
+  
+  <!-- Worm creature -->
+  <g transform="translate(200, 280)">
+    <path d="M-40 0 Q-20 -15 0 0 Q20 15 40 0" stroke="#a6e3a1" stroke-width="8" fill="none" stroke-linecap="round"/>
+    <circle cx="-45" cy="0" r="8" fill="#a6e3a1"/>
+    <circle cx="-48" cy="-2" r="2" fill="#1e1e2e"/>
+  </g>
+  
+  <!-- Entry/exit points -->
+  <g fill="#1e1e2e" stroke="#a6e3a1" stroke-width="2">
+    <circle cx="50" cy="250" r="12"/>
+    <circle cx="350" cy="250" r="12"/>
+    <circle cx="200" cy="200" r="15"/>
+  </g>
+  
+  <!-- Network nodes above ground -->
+  <g fill="#f9e2af" filter="url(#glow)">
+    <circle cx="100" cy="150" r="6"/>
+    <circle cx="200" cy="120" r="8"/>
+    <circle cx="300" cy="150" r="6"/>
+    <circle cx="150" cy="100" r="4"/>
+    <circle cx="250" cy="100" r="4"/>
+  </g>
+  
+  <!-- Connection lines -->
+  <g stroke="#45475a" stroke-width="1" opacity="0.5">
+    <line x1="100" y1="150" x2="200" y2="120"/>
+    <line x1="200" y1="120" x2="300" y2="150"/>
+    <line x1="150" y1="100" x2="200" y2="120"/>
+    <line x1="250" y1="100" x2="200" y2="120"/>
+    <line x1="100" y1="150" x2="50" y2="250"/>
+    <line x1="300" y1="150" x2="350" y2="250"/>
+    <line x1="200" y1="120" x2="200" y2="200"/>
+  </g>
+  
+  <!-- Text -->
+  <text x="200" y="50" text-anchor="middle" fill="#a6e3a1" font-family="monospace" font-size="36" font-weight="bold" letter-spacing="4">BURROW</text>
+  <text x="200" y="75" text-anchor="middle" fill="#6c7086" font-family="monospace" font-size="10" letter-spacing="2">SUBTERRANEAN PIVOTING</text>
+</svg>

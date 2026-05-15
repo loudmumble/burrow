@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <defs>
+    <linearGradient id="wormGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#a6e3a1;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#94e2d5;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Night sky -->
+  <rect width="400" height="400" fill="#11111b"/>
+  
+  <!-- Moon -->
+  <circle cx="320" cy="80" r="30" fill="#f9e2af" opacity="0.8"/>
+  <circle cx="330" cy="75" r="25" fill="#11111b"/>
+  
+  <!-- Stars -->
+  <g fill="#cdd6f4" opacity="0.4">
+    <circle cx="50" cy="40" r="1"/><circle cx="100" cy="60" r="0.5"/>
+    <circle cx="180" cy="30" r="1"/><circle cx="250" cy="50" r="0.5"/>
+    <circle cx="380" cy="120" r="1"/><circle cx="30" cy="100" r="0.5"/>
+  </g>
+  
+  <!-- Ground -->
+  <ellipse cx="200" cy="350" rx="180" ry="40" fill="#1e1e2e"/>
+  
+  <!-- Cute worm character -->
+  <g transform="translate(200, 280)">
+    <!-- Body segments -->
+    <ellipse cx="-30" cy="0" rx="15" ry="12" fill="url(#wormGrad)"/>
+    <ellipse cx="-10" cy="5" rx="18" ry="14" fill="url(#wormGrad)"/>
+    <ellipse cx="15" cy="0" rx="20" ry="16" fill="url(#wormGrad)"/>
+    <ellipse cx="40" cy="5" rx="18" ry="14" fill="url(#wormGrad)"/>
+    <ellipse cx="60" cy="0" rx="15" ry="12" fill="url(#wormGrad)"/>
+    
+    <!-- Head -->
+    <circle cx="80" cy="0" r="18" fill="url(#wormGrad)"/>
+    
+    <!-- Face -->
+    <circle cx="75" cy="-5" r="4" fill="#1e1e2e"/>
+    <circle cx="75" cy="-5" r="2" fill="#fff"/>
+    <circle cx="88" cy="-5" r="4" fill="#1e1e2e"/>
+    <circle cx="88" cy="-5" r="2" fill="#fff"/>
+    
+    <!-- Smile -->
+    <path d="M75 8 Q80 15 90 8" stroke="#1e1e2e" stroke-width="2" fill="none"/>
+    
+    <!-- Hard hat (construction worker) -->
+    <path d="M65 -15 Q80 -25 95 -15" fill="#f9e2af" stroke="#f9e2af" stroke-width="2"/>
+    <rect x="62" y="-15" width="36" height="5" fill="#f9e2af"/>
+  </g>
+  
+  <!-- Tunnel being dug -->
+  <path d="M280 280 Q320 280 350 300 Q380 320 380 350" 
+        stroke="#45475a" stroke-width="20" fill="none" stroke-linecap="round"/>
+  
+  <!-- Dirt particles -->
+  <g fill="#8b6914" opacity="0.6">
+    <circle cx="300" cy="270" r="3"/>
+    <circle cx="310" cy="260" r="2"/>
+    <circle cx="290" cy="265" r="2.5"/>
+    <circle cx="315" cy="275" r="2"/>
+  </g>
+  
+  <!-- Network cables coming out of tunnel -->
+  <g stroke="#a6e3a1" stroke-width="2" fill="none">
+    <path d="M350 300 Q380 280 380 250"/>
+    <path d="M350 310 Q390 290 390 240"/>
+  </g>
+  
+  <!-- Connection points -->
+  <circle cx="380" cy="250" r="5" fill="#a6e3a1"/>
+  <circle cx="390" cy="240" r="5" fill="#a6e3a1"/>
+  
+  <!-- Text (playful) -->
+  <text x="200" y="50" text-anchor="middle" fill="#a6e3a1" font-family="'Comic Sans MS', cursive" font-size="32" font-weight="bold">BURROW</text>
+  <text x="200" y="75" text-anchor="middle" fill="#6c7086" font-family="monospace" font-size="10">NETWORK TUNNEL FRIEND</text>
+</svg>
