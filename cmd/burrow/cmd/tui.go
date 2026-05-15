@@ -2066,7 +2066,6 @@ func (m tuiModel) viewExecForm(b *strings.Builder) {
 	}
 
 	b.WriteString(stCyan.Bold(true).Render("▸ ") + stCyan.Bold(true).Render("Command:") + "\n")
-	cursorBlock := stCyan.Bold(true).Render("█")
 	value := m.inputValues[0]
 	pos := 0
 	if len(m.inputPos) > 0 {
@@ -2075,7 +2074,13 @@ func (m tuiModel) viewExecForm(b *strings.Builder) {
 	if pos > len(value) {
 		pos = len(value)
 	}
-	displayVal := value[:pos] + cursorBlock + value[pos:]
+	var displayVal string
+	if pos < len(value) {
+		cursorChar := lipgloss.NewStyle().Background(lipgloss.Color("86")).Foreground(lipgloss.Color("235")).Bold(true).Render(value[pos : pos+1])
+		displayVal = value[:pos] + cursorChar + value[pos+1:]
+	} else {
+		displayVal = value + stCyan.Bold(true).Render("█")
+	}
 	padding := max(0, boxW-2-lipgloss.Width(displayVal))
 	b.WriteString("    ┌" + strings.Repeat("─", boxW) + "┐\n")
 	b.WriteString("    │ " + displayVal + strings.Repeat(" ", padding) + " │\n")
@@ -2215,7 +2220,6 @@ func (m tuiModel) viewDownloadForm(b *strings.Builder) {
 	}
 
 	b.WriteString(stCyan.Bold(true).Render("▸ ") + stCyan.Bold(true).Render("Remote Path:") + "\n")
-	cursorBlock := stCyan.Bold(true).Render("█")
 	value := m.inputValues[0]
 	dPos := 0
 	if len(m.inputPos) > 0 {
@@ -2224,7 +2228,13 @@ func (m tuiModel) viewDownloadForm(b *strings.Builder) {
 	if dPos > len(value) {
 		dPos = len(value)
 	}
-	displayVal := value[:dPos] + cursorBlock + value[dPos:]
+	var displayVal string
+	if dPos < len(value) {
+		cursorChar := lipgloss.NewStyle().Background(lipgloss.Color("86")).Foreground(lipgloss.Color("235")).Bold(true).Render(value[dPos : dPos+1])
+		displayVal = value[:dPos] + cursorChar + value[dPos+1:]
+	} else {
+		displayVal = value + stCyan.Bold(true).Render("█")
+	}
 	padding := max(0, boxW-2-lipgloss.Width(displayVal))
 	b.WriteString("    ┌" + strings.Repeat("─", boxW) + "┐\n")
 	b.WriteString("    │ " + displayVal + strings.Repeat(" ", padding) + " │\n")
@@ -2963,12 +2973,17 @@ func (m tuiModel) viewLabelInput(b *strings.Builder) {
 	}
 
 	b.WriteString(stCyan.Bold(true).Render("▸ ") + stCyan.Bold(true).Render("Label (max 16 chars):") + "\n")
-	cursorBlock := stCyan.Bold(true).Render("█")
 	pos := m.labelPos
 	if pos > len(m.labelInput) {
 		pos = len(m.labelInput)
 	}
-	displayVal := m.labelInput[:pos] + cursorBlock + m.labelInput[pos:]
+	var displayVal string
+	if pos < len(m.labelInput) {
+		cursorChar := lipgloss.NewStyle().Background(lipgloss.Color("86")).Foreground(lipgloss.Color("235")).Bold(true).Render(m.labelInput[pos : pos+1])
+		displayVal = m.labelInput[:pos] + cursorChar + m.labelInput[pos+1:]
+	} else {
+		displayVal = m.labelInput + stCyan.Bold(true).Render("█")
+	}
 	padding := max(0, boxW-2-lipgloss.Width(displayVal))
 	b.WriteString("    ┌" + strings.Repeat("─", boxW) + "┐\n")
 	b.WriteString("    │ " + displayVal + strings.Repeat(" ", padding) + " │\n")
@@ -3346,8 +3361,12 @@ func (m tuiModel) renderTextBox(idx int, boxW int) string {
 		if pos > len(value) {
 			pos = len(value)
 		}
-		cursorBlock := stCyan.Bold(true).Render("█")
-		displayVal = value[:pos] + cursorBlock + value[pos:]
+		if pos < len(value) {
+			cursorChar := lipgloss.NewStyle().Background(lipgloss.Color("86")).Foreground(lipgloss.Color("235")).Bold(true).Render(value[pos : pos+1])
+			displayVal = value[:pos] + cursorChar + value[pos+1:]
+		} else {
+			displayVal = value + stCyan.Bold(true).Render("█")
+		}
 		valWidth = lipgloss.Width(displayVal)
 	} else {
 		displayVal = value
